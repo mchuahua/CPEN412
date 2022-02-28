@@ -1,1 +1,3 @@
 https://youtu.be/ykndxB6v1SM
+
+I fixed the mem test from lab 1 so it should work. Double checked with mem dump.
