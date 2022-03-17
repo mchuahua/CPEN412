@@ -1,0 +1,8 @@
+25Mhz Non-cached - 1min 47s
+Baseline -1x
+
+45MHz cached 32line - 1min 12s
+Speedup ~ 1.49x
+
+45MHz cached 512lines - 1min 04s
+Speedup ~1.67x
