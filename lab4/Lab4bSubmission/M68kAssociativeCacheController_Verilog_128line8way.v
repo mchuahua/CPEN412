@@ -246,7 +246,7 @@ module M68kAssociativeCacheController_Verilog (
 		else if(CurrentState == Idle) begin									// if we are in the idle state				
 			if ((AS_L == 0) && (DramSelect68k_H == 1)) begin
 				LRUBits_Load_H <= 1;
-				if(WE_L == 0) begin
+				if(WE_L == 1) begin
 					UDS_DramController_L <= 1'b0;
 					LDS_DramController_L <= 1'b0;
 					NextState <= CheckForCacheHit;
