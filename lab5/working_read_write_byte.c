@@ -90,6 +90,24 @@
 #define PIA2_PortB_Control *(volatile unsigned char *)(0x00400066)
 
 /*************************************************************
+** SPI Controller registers
+**************************************************************/
+// SPI Registers
+// #define SPI_Control         (*(volatile unsigned char *)(0x00408020))
+// #define SPI_Status          (*(volatile unsigned char *)(0x00408022))
+// #define SPI_Data            (*(volatile unsigned char *)(0x00408024))
+// #define SPI_Ext             (*(volatile unsigned char *)(0x00408026))
+// #define SPI_CS              (*(volatile unsigned char *)(0x00408028))
+
+// // these two macros enable or disable the flash memory chip enable off SSN_O[7..0]
+// // in this case we assume there is only 1 device connected to SSN_O[0] so we can
+// // write hex FE to the SPI_CS to enable it (the enable on the flash chip is active low)
+// // and write FF to disable it
+
+// #define   Enable_SPI_CS()             SPI_CS = 0xFE
+// #define   Disable_SPI_CS()            SPI_CS = 0xFF 
+
+/*************************************************************
 ** I2C Controller registers
 **************************************************************/
 // I2C Registers
@@ -100,18 +118,6 @@
 #define I2C_RXR        (*(volatile unsigned char *)(0x00408006))
 #define I2C_CR         (*(volatile unsigned char *)(0x00408008))
 #define I2C_SR         (*(volatile unsigned char *)(0x00408008))
-
-// STA bit == cmd[7], W bit == cmd[4], IACK bit == cmd[0] -> 8'b1001_0001
-#define WSTART 0x91
-// STO bit == cmd[6], W bit == cmd[4] -> 8'b0101_0000
-#define WSTOP 0x50
-// W bit = cmd[4] -> 8'b0001_0000
-#define WRITE 0x10
-// R bit == cmd[5], NACK bit == cmd[3], IACK bit == cmd[0] -> 8'b0010_1001
-#define READNACK 0x29
-// R bit == cmd[5], NACK bit == cmd[3], IACK bit == cmd[0] -> 8'b0010_0001
-#define READACK 0x21
-
 
 
 /*********************************************************************************************************************************
@@ -136,6 +142,20 @@ void LCDline1Message(char *theMessage);
 void LCDline2Message(char *theMessage);
 int sprintf(char *out, const char *format, ...) ;
 
+// SPI
+// int TestForSPITransmitData(void);
+// void SPI_Init(void);
+// void WaitForSPITransmitComplete(void);
+// int  WriteSPIChar(int c);
+// int  ReadSPIChar(void);
+// void WriteSPICmdAndAddr(int cmd, int FlashAddr);
+// void ReadSPIData(int FlashAddr, unsigned char *MemAddr, int size);
+// void WriteSPIData(int FlashAddr, unsigned char *MemAddr, int size);
+// void WriteSPIDataLarge(int FlashAddr, unsigned char *MemAddr, int size);
+// void WriteSPICmdOnly(int cmd);
+// void CheckSPIBusy(void);
+// void EraseSPIChip(void);
+
 // I2C
 void I2C_Init(void);
 void I2C_Start(void);
@@ -144,11 +164,9 @@ void WaitForTIPFlagReset(void);
 void WaitForRxACK(void);
 void WriteI2CChar(char data, char slave_addr, char memaddr_hi, char memaddr_lo);
 void ReadI2CChar(char *data, char slave_addr, char memaddr_hi, char memaddr_lo);
-void WriteI2CPage(char slave_addr, char memaddr_hi, char memaddr_lo, char size);
-void ReadI2CPage(char *data, char slave_addr, char memaddr_hi, char memaddr_lo, char size);
-void GetMemAddr(char *hi, char *lo);
-void GetBank(char *bank);
-void Wait(void);
+void WriteI2CPage(int FlashAddr, unsigned char *MemAddr, int size);
+void ReadI2CPage(int FlashAddr, unsigned char *MemAddr, int size);
+
 
 /*****************************************************************************************
 **	Interrupt service routine for Timers
@@ -415,171 +433,72 @@ void WaitForTIPFlagReset(void){
     }
 }
 
-void Wait(void){
+// Assumptions: addr is at most 7 bits wide
+void WriteI2CChar(char data, char slave_addr, char memaddr_hi, char memaddr_lo){
+    // Check before doing anything
+    WaitForTIPFlagReset();
+    // Set slave to write mode
+    I2C_TXR = slave_addr;
+    // Generate start command
+    // STA bit == cmd[7], W bit == cmd[4], IACK bit == cmd[0] -> 8'b1001_0001
+    I2C_CR = 0x91;
+    WaitForTIPFlagReset();
+    WaitForRxACK();
+    // Write Mem Address and set W bit
+    I2C_TXR = memaddr_hi;
+    I2C_CR = 0x10;
+    WaitForTIPFlagReset();
+    WaitForRxACK();
+    I2C_TXR = memaddr_lo;
+    I2C_CR = 0x10;
+    WaitForTIPFlagReset();
+    WaitForRxACK();
+    // Write data transmit register, set STO bit, set W bit
+    // STO bit == cmd[6], W bit == cmd[4] -> 8'b0101_0000
+    I2C_TXR = data;
+    I2C_CR = 0x50;
     WaitForTIPFlagReset();
     WaitForRxACK();
 }
 
-void TransmitI2C(char data, char cr){
-    I2C_TXR = data;
-    I2C_CR = cr;
-    Wait();
-}
-
-// Assumptions: addr is at most 7 bits wide
-void WriteI2CChar(char data, char slave_addr, char memaddr_hi, char memaddr_lo){
-      printf("\r\n data is %d\r\n", data);
-    printf("\r\n slaveaddr %x\r\n", slave_addr);
-    printf("\r\n memaddrhi is %d\r\n", memaddr_hi);
-    printf("\r\n memaddrlo is %d\r\n", memaddr_lo);
-    // Check before doing anything
-    WaitForTIPFlagReset();
-    // Set slave to write mode, Generate start command
-    TransmitI2C(slave_addr, WSTART);
-    // Write Mem Address and set W bit
-    TransmitI2C(memaddr_hi, WRITE);
-    TransmitI2C(memaddr_lo, WRITE);
-    // Write data transmit register, set STO bit, set W bit. 
-    TransmitI2C(data, WSTOP);
-}
-
-// Assumptions: slave_addr is in write mode
+// Assumptions: slave_addr is at most 7 bits wide
 void ReadI2CChar(char *data, char slave_addr, char memaddr_hi, char memaddr_lo){
     // Check before doing anything
     WaitForTIPFlagReset();
-    // Set slave to write mode, Generate start command
-    TransmitI2C(slave_addr, WSTART);
+    WaitForRxACK();
+
+    // Set slave to write mode
+    I2C_TXR = slave_addr;
+    // Generate start command
+    // STA bit == cmd[7], W bit == cmd[4], IACK bit == cmd[0] 8'b1001_0001
+    I2C_CR = 0x91;
+    WaitForTIPFlagReset();
+    WaitForRxACK();
     // Write Mem Address and set W bit
-    TransmitI2C(memaddr_hi, WRITE);
-    TransmitI2C(memaddr_lo, WRITE);
-    // Set slave to read mode and generate start command for reading
-    TransmitI2C(slave_addr | 1, WSTART);
-    // Read data transmit register, set R bit, set NACK and IACK
-    I2C_CR = READNACK;
+    I2C_TXR = memaddr_hi;
+    I2C_CR = 0x10;
+    WaitForTIPFlagReset();
+    WaitForRxACK();    
+    I2C_TXR = memaddr_lo;
+    I2C_CR = 0x10;
+    WaitForTIPFlagReset();
+    WaitForRxACK();
+    // Set slave to read mode
+    I2C_TXR = slave_addr | 1;
+    // Generate start command for reading
+    // STA bit == cmd[7], W bit == cmd[4], IACK bit == cmd[0] 8'b1010_0000
+    I2C_CR = 0x91;
+    WaitForTIPFlagReset();
+    WaitForRxACK();
+    // Read data transmit register, set R bit, set IACK
+    // R bit == cmd[5], NACK bit == cmd[3], IACK bit == cmd[0] -> 8'b0010_1001
+    I2C_CR = 0x29;
     // Wait for read data to come in
     while((I2C_SR & 1) !=1){}
     *data = I2C_RXR;
-    I2C_CR = 0x41;
 }
 
-// Increment logic, handles bank overflows
-void incrI2C(char *slave_addr, char *memaddr_hi, char *memaddr_lo, int read){
-    char zeewo = 0x00;
-    char one = 0x01;
-    printf("\r\n %x %x%x", *slave_addr, *memaddr_hi, *memaddr_lo);
-    if ((*memaddr_lo & 0xFF) == 0xFF){
-        if ((*memaddr_hi & 0xFF) == 0xFF){ // Change bank
-            *slave_addr = ((*slave_addr & 0x8) == 0x8) ? 0xA0 : 0xA8;
-            *memaddr_lo = zeewo;
-            *memaddr_hi = zeewo;
-            
-            if(read & 1){
-                printf("\r\n Changing slave and restart %x", *slave_addr);
-                TransmitI2C(*slave_addr, WSTART);
-                TransmitI2C(*memaddr_hi, WRITE);
-                TransmitI2C(*memaddr_lo, WRITE);
-                TransmitI2C(*slave_addr | 1, WSTART);
-            }
-            else{
-                TransmitI2C(*slave_addr, WSTART);
-                TransmitI2C(*memaddr_hi, WRITE);
-                TransmitI2C(*memaddr_lo, WRITE);
-            }
-            printf("\r\n HIT EDGE CASE %x %x%x", *slave_addr, *memaddr_hi, *memaddr_lo);
-        }
-        else{
-            *memaddr_hi += one;
-            *memaddr_lo = zeewo;
-        }
-    }
-    else{
-        *memaddr_lo += one;
-    }
-}
 
-void WriteI2CPage(char slave_addr, char memaddr_hi, char memaddr_lo, char size){
-    // Data is array of size "size", max size 128
-    // WriteI2CChar();
-    char i;
-    // Check before doing anything
-    WaitForTIPFlagReset();
-    // Set slave to write mode, Generate start command
-    TransmitI2C(slave_addr, WSTART);
-    // Write Mem Address and set W bit
-    TransmitI2C(memaddr_hi, WRITE);
-    TransmitI2C(memaddr_lo, WRITE);
-    for (i = 0; i < size; i++){
-        // Write without stop unless we're at the end
-        if (i == (size-1) || ((memaddr_hi & 0xFF) == 0xFF) && ((memaddr_lo & 0xFF) == 0xFF)){
-            TransmitI2C(i,WSTOP);
-        }
-        else{
-            TransmitI2C(i,WRITE);
-        }
-        // Page crossing, if it happens, is handled inside incrI2C
-        incrI2C(&slave_addr, &memaddr_hi, &memaddr_lo, 0);
-    }
-
-}
-
-void ReadI2CPage(char *data, char slave_addr, char memaddr_hi, char memaddr_lo, char size){
-     // Data is array of size "size", max size 128
-    char i;
-    char temp = 0;
-    // Check before doing anything
-    WaitForTIPFlagReset();
-    // Set slave to write mode, Generate start command
-    TransmitI2C(slave_addr, WSTART);
-    // Write Mem Address and set W bit
-    TransmitI2C(memaddr_hi, WRITE);
-    TransmitI2C(memaddr_lo, WRITE);
-    // Set slave to read mode and generate start command for reading
-    TransmitI2C(slave_addr | 1, WSTART);
-    for (i = 0; i < size; i++){
-        // Read without NACK unless we're at the end
-        if (i == (size-1) || ((memaddr_hi & 0xFF) == 0xFF) && ((memaddr_lo & 0xFF) == 0xFF)){
-            I2C_CR = READNACK;
-        }
-        else
-            I2C_CR = READACK;
-        while((I2C_SR & 1) !=1){}
-        data[i] = I2C_RXR;
-        if (i == (size-1) || ((memaddr_hi & 0xFF) == 0xFF) && ((memaddr_lo & 0xFF) == 0xFF))
-            I2C_CR = 0x41;
-        else
-            I2C_CR = 0x01;
-        // Page crossing, if it happens, is handled inside incrI2C
-        incrI2C(&slave_addr, &memaddr_hi, &memaddr_lo, 1);
-    }
-}
-
-void GetBank(char *bank){
-    char asdf;
-    while(1){
-        printf("\r\nSelect bank:\r\n0 - Bank 0\r\n1 - Bank 1");
-        asdf = getchar();
-        putchar(asdf);
-        if(asdf == '0'){
-            *bank = 0xA0;
-            break;
-        }
-        else if (asdf == '1'){
-            *bank = 0xA8;
-            break;
-        }
-        else{
-            printf("\r\nInvalid selection.");
-        }
-    }       
-}
-
-void GetMemAddr(char *hi, char *lo){
-    printf("\r\nEnter mem address hi:");
-    *hi = Get2HexDigits(0);
-    printf("\r\nEnter mem address lo:");
-    *lo = Get2HexDigits(0);
-    // TODO: Hex digit validation?
-}
 /*********************************************************************************************************************************
 **  IMPORTANT FUNCTION
 **  This function install an exception handler so you can capture and deal with any 68000 exception in your program
@@ -601,16 +520,13 @@ void InstallExceptionHandler( void (*function_ptr)(), int level)
 
 void main()
 {
-    unsigned int row, j=0, count=0, counter1=1;
-    char i = 0;
+    unsigned int row, i=0, j=0, count=0, counter1=1;
     char c, text[150] ;
 
-    unsigned char asdf, asdf1, asdf2, asdf3, bank;
+    unsigned char asdf, asdf1, asdf2, asdf3;
     unsigned char wBuf[256];
     unsigned char rBuf[256];
     int addr = 2048;
-    char size;
-    char data[128];
 
 	int PassFailFlag = 1 ;
 
@@ -636,76 +552,82 @@ void main()
     Init_LCD();             // initialise the LCD display to use a parallel data interface and 2 lines of display
     Init_RS232() ;          // initialise the RS232 port for use with hyper terminal
 
+
+/*************************************************************************************************
+**  Test of scanf function
+*************************************************************************************************/
+
+    scanflush() ;                       // flush any text that may have been typed ahead
+    // printf("\r\nEnter Integer: ") ;
+    // scanf("%d", &i) ;
+    // printf("You entered %d", i) ;
+
+    // sprintf(text, "Hello CPEN 412 Student") ;
+    // LCDLine1Message(text) ;
+
+    // printf("\r\nHello CPEN 412 Student\r\nYour LEDs should be Flashing") ;
+    // printf("\r\nYour LCD should be displaying") ;
+
 /*************************************************************************************************
 **  I2C Program Lab 5
 *************************************************************************************************/
-
+    // 16384 pages of 256 bytes each
+    // Pages can be erased in groups of:
+    // - 16 (4KB sector erase)
+    // - 128 (32KB block erase)
+    // - 256 (64KB block erase)
+    // - Entire chip (chip erase)
+    // SPI_Init();
     I2C_Init();
 
-    // printf("%x\n", I2C_PRERLO);
-    // printf("%x\n", I2C_PRERHI);
-    // printf("%x\n", I2C_CTR);
-    // printf("%x\n", I2C_TXR);
-    // printf("%x\n", I2C_RXR);
-    // printf("%x\n", I2C_CR);
-    // printf("%x\n", I2C_SR);
+    printf("%x\n", I2C_PRERLO);
+    printf("%x\n", I2C_PRERHI);
+    printf("%x\n", I2C_CTR);
+    printf("%x\n", I2C_TXR);
+    printf("%x\n", I2C_RXR);
+    printf("%x\n", I2C_CR);
+    printf("%x\n", I2C_SR);
 
-    printf("\r\nLab 5: I2C");
+    printf("\r\nI2C char sending!");
     while(1){
-       
-        printf("\r\nChoose the following:\r\n0 - Write Byte\r\n1 - Read Byte\r\n2 - Page Write\r\n3 - Page Read\r\n4 - ADC stuff todo\r\n");
+        printf("\r\nWrite char to I2C: ");
         asdf = getchar();
         putchar(asdf);
-        if(asdf == '0'){
-            printf("\r\nEnter byte to write: ");
-            asdf = Get2HexDigits(0);
-            // Bank Selection
-            GetBank(&bank);
-            // Mem Address Selection
-            GetMemAddr(&asdf2, &asdf1);
-            WriteI2CChar(asdf, bank, asdf2, asdf1);
-            printf("\r\nWritten %x to bank %d at memaddr hi: %x mem addr lo: %x", asdf, bank == 0xA0 ? 0:1, asdf2, asdf1);
-        }
-        else if(asdf == '1'){
-            // Bank Selection
-            GetBank(&bank);
-            // Mem Address Selection
-            GetMemAddr(&asdf, &asdf1);
-            ReadI2CChar(&asdf3, bank, asdf, asdf1);
-            printf("\r\nRead %x from bank %d at memaddr hi: %x mem addr lo: %x", asdf3, bank == 0xA0 ? 0:1, asdf, asdf1);
-        }
-        else if(asdf == '2'){
-            printf("\r\nbruh");printf("\r\nEnter size of page to write(max 128 in hex == 0x7F): ");
-            size = Get2HexDigits(0);
-            // Bank Selection
-            GetBank(&bank);
-            // Mem Address Selection
-            GetMemAddr(&asdf2, &asdf1);
-            WriteI2CPage(bank, asdf2, asdf1,size);
-            printf("\r\nWrote values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == 0xA0 ? 0:1,size);
-            for(i = 0; i < size; i++){
-                printf("%x", i);
-            }
-        }
-        else if(asdf == '3'){
-            printf("\r\nbruh");printf("\r\nEnter size of page to read(max 128 in hex == 0x7F): ");
-            size = Get2HexDigits(0);
-            // Bank Selection
-            GetBank(&bank);
-            // Mem Address Selection
-            GetMemAddr(&asdf2, &asdf1);
-            ReadI2CPage(data, bank, asdf2, asdf1,size);
-            printf("\r\nRead values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == 0xA0 ? 0:1,size);
-            for(i = 0; i < size; i++){
-                printf("%x", data[i]);
-            }
-        }
-        else if(asdf == '4'){
-            printf("\r\nbruh");
-        }
-        else{
-            printf("\r\nInvalid Selection.\r\n");
-            continue;
-        }   
+        // printf("\r\nChoose bank 0 or 1: ");
+        // asdf1 = getchar();
+        // putchar(asdf1);
+        // printf("\r\nMem Addr hi: ");
+        // asdf2 = Get2HexDigits(0);
+        // printf("\r\nMem Addr lo: ");
+        // asdf3 = Get2HexDigits(0);
+        // A0 - Bank 0
+        // A8 - Bank 1
+        // WriteI2CChar(asdf, asdf1 == 0 ? 0xA0 : 0xA1, asdf2, asdf3);
+        WriteI2CChar(asdf, 0xA0, 0xA8, 0xA8);
+
+        printf("\r\nPress enter for no reason: ");
+        asdf = getchar();
+        putchar(asdf);
+
+        ReadI2CChar(&asdf3, 0xA0, 0xA8, 0xA8);
+        printf("\r\nRead char from I2C: %c", asdf3);
     }
+    
+
+/*************************************************************************************************
+**  While loop
+*************************************************************************************************/
+    // printf("\r\nEntering infinite loop of I2C char sending and receiving!");
+    // while(1){
+    //     printf("\r\nWrite char to SPI: ");
+    //     asdf = getchar();
+    //     putchar(asdf);
+    //     WriteSPI(0, asdf, 1);
+    //     ReadSPIData(0, asdf, 1);
+    //     printf("\r\nRead char from SPI: %c", asdf);
+    // }
+        
+
+   // programs should NOT exit as there is nothing to Exit TO !!!!!!
+   // There is no OS - just press the reset button to end program and call debug
 }
