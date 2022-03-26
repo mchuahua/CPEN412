@@ -91,6 +91,16 @@
 ; #define READNACK 0x29
 ; // R bit == cmd[5], NACK bit == cmd[3], IACK bit == cmd[0] -> 8'b0010_0001
 ; #define READACK 0x21
+; #define EEPROM_SLAVE_BANK0 0xA0
+; #define EEPROM_SLAVE_BANK1 0xA8
+; #define ADCDAC_SLAVE 0x90
+; // 8'b01xx_0xxx
+; #define DAC_OUT_ON 0x40
+; // 8'b00xx_0xxx
+; #define DAC_OUT_OFF 0x00
+; // 8'b0000_0101
+; #define ADC_AUTO_INCREMENT_A1 0x05
+; #define ADC_AUTO_INCREMENT_A0 0x04
 ; /*********************************************************************************************************************************
 ; (( DO NOT initialise global variables here, do it main even if you want 0
 ; (( it's a limitation of the compiler
@@ -103,6 +113,9 @@
 ; *******************************************************************************************/
 ; void Wait1ms(void);
 ; void Wait3ms(void);
+; void Wait250ms(void);
+; void Wait750ms(void);
+; void Wait1s(void);
 ; void Init_LCD(void) ;
 ; void LCDOutchar(int c);
 ; void LCDOutMess(char *theMessage);
@@ -123,6 +136,7 @@
 ; void GetMemAddr(char *hi, char *lo);
 ; void GetBank(char *bank);
 ; void Wait(void);
+; void readADC(void);
 ; /*****************************************************************************************
 ; **	Interrupt service routine for Timers
 ; **
@@ -395,6 +409,65 @@ Wait3ms_1:
        addq.l    #1,D2
        bra       Wait3ms_1
 Wait3ms_3:
+       move.l    (A7)+,D2
+       rts
+; }
+; void Wait250ms(void)
+; {
+       xdef      _Wait250ms
+_Wait250ms:
+       move.l    D2,-(A7)
+; int i ;
+; for(i = 0; i < 250; i++)
+       clr.l     D2
+Wait250ms_1:
+       cmp.l     #250,D2
+       bge.s     Wait250ms_3
+; Wait1ms() ;
+       jsr       _Wait1ms
+       addq.l    #1,D2
+       bra       Wait250ms_1
+Wait250ms_3:
+       move.l    (A7)+,D2
+       rts
+; }
+; void Wait750ms(void)
+; {
+       xdef      _Wait750ms
+_Wait750ms:
+       move.l    D2,-(A7)
+; int i ;
+; for(i = 0; i < 750; i++)
+       clr.l     D2
+Wait750ms_1:
+       cmp.l     #750,D2
+       bge.s     Wait750ms_3
+; Wait1ms() ;
+       jsr       _Wait1ms
+       addq.l    #1,D2
+       bra       Wait750ms_1
+Wait750ms_3:
+       move.l    (A7)+,D2
+       rts
+; }
+; /************************************************************************************
+; **  Subroutine to give the 68000 something useless to do to waste 1s
+; **************************************************************************************/
+; void Wait1s(void){
+       xdef      _Wait1s
+_Wait1s:
+       move.l    D2,-(A7)
+; int i;
+; for(i = 0; i < 1000; i++)
+       clr.l     D2
+Wait1s_1:
+       cmp.l     #1000,D2
+       bge.s     Wait1s_3
+; Wait1ms();
+       jsr       _Wait1ms
+       addq.l    #1,D2
+       bra       Wait1s_1
+Wait1s_3:
        move.l    (A7)+,D2
        rts
 ; }
@@ -704,41 +777,8 @@ _TransmitI2C:
        xdef      _WriteI2CChar
 _WriteI2CChar:
        link      A6,#0
-       movem.l   A2/A3,-(A7)
+       move.l    A2,-(A7)
        lea       _TransmitI2C.L,A2
-       lea       _printf.L,A3
-; printf("\r\n data is %d\r\n", data);
-       move.b    11(A6),D1
-       ext.w     D1
-       ext.l     D1
-       move.l    D1,-(A7)
-       pea       @m68kus~1_1.L
-       jsr       (A3)
-       addq.w    #8,A7
-; printf("\r\n slaveaddr %x\r\n", slave_addr);
-       move.b    15(A6),D1
-       ext.w     D1
-       ext.l     D1
-       move.l    D1,-(A7)
-       pea       @m68kus~1_2.L
-       jsr       (A3)
-       addq.w    #8,A7
-; printf("\r\n memaddrhi is %d\r\n", memaddr_hi);
-       move.b    19(A6),D1
-       ext.w     D1
-       ext.l     D1
-       move.l    D1,-(A7)
-       pea       @m68kus~1_3.L
-       jsr       (A3)
-       addq.w    #8,A7
-; printf("\r\n memaddrlo is %d\r\n", memaddr_lo);
-       move.b    23(A6),D1
-       ext.w     D1
-       ext.l     D1
-       move.l    D1,-(A7)
-       pea       @m68kus~1_4.L
-       jsr       (A3)
-       addq.w    #8,A7
 ; // Check before doing anything
 ; WaitForTIPFlagReset();
        jsr       _WaitForTIPFlagReset
@@ -777,7 +817,7 @@ _WriteI2CChar:
        move.l    D1,-(A7)
        jsr       (A2)
        addq.w    #8,A7
-       movem.l   (A7)+,A2/A3
+       move.l    (A7)+,A2
        unlk      A6
        rts
 ; }
@@ -853,35 +893,16 @@ ReadI2CChar_3:
        xdef      _incrI2C
 _incrI2C:
        link      A6,#0
-       movem.l   D2/D3/D4/D5/D6/A2/A3,-(A7)
+       movem.l   D2/D3/D4/D5/D6/A2,-(A7)
+       lea       _TransmitI2C.L,A2
        move.l    8(A6),D2
        move.l    16(A6),D3
-       lea       _TransmitI2C.L,A2
        move.l    12(A6),D4
-       lea       _printf.L,A3
 ; char zeewo = 0x00;
        clr.b     D5
 ; char one = 0x01;
        moveq     #1,D6
-; printf("\r\n %x %x%x", *slave_addr, *memaddr_hi, *memaddr_lo);
-       move.l    D3,A0
-       move.b    (A0),D1
-       ext.w     D1
-       ext.l     D1
-       move.l    D1,-(A7)
-       move.l    D4,A0
-       move.b    (A0),D1
-       ext.w     D1
-       ext.l     D1
-       move.l    D1,-(A7)
-       move.l    D2,A0
-       move.b    (A0),D1
-       ext.w     D1
-       ext.l     D1
-       move.l    D1,-(A7)
-       pea       @m68kus~1_5.L
-       jsr       (A3)
-       add.w     #16,A7
+; // printf("\r\n %x %x%x", *slave_addr, *memaddr_hi, *memaddr_lo);
 ; if ((*memaddr_lo & 0xFF) == 0xFF){
        move.l    D3,A0
        move.b    (A0),D0
@@ -896,7 +917,7 @@ _incrI2C:
        and.w     #255,D0
        cmp.w     #255,D0
        bne       incrI2C_3
-; *slave_addr = ((*slave_addr & 0x8) == 0x8) ? 0xA0 : 0xA8;
+; *slave_addr = ((*slave_addr & 0x8) == 0x8) ? EEPROM_SLAVE_BANK0 : EEPROM_SLAVE_BANK1;
        move.l    D2,A0
        move.b    (A0),D0
        and.b     #8,D0
@@ -925,8 +946,8 @@ incrI2C_6:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_6.L
-       jsr       (A3)
+       pea       @m68kus~1_1.L
+       jsr       _printf
        addq.w    #8,A7
 ; TransmitI2C(*slave_addr, WSTART);
        pea       145
@@ -1014,8 +1035,8 @@ incrI2C_8:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_7.L
-       jsr       (A3)
+       pea       @m68kus~1_2.L
+       jsr       _printf
        add.w     #16,A7
        bra.s     incrI2C_4
 incrI2C_3:
@@ -1037,7 +1058,7 @@ incrI2C_1:
        move.l    D3,A0
        add.b     D6,(A0)
 incrI2C_2:
-       movem.l   (A7)+,D2/D3/D4/D5/D6/A2/A3
+       movem.l   (A7)+,D2/D3/D4/D5/D6/A2
        unlk      A6
        rts
 ; }
@@ -1283,7 +1304,7 @@ _GetBank:
 ; while(1){
 GetBank_1:
 ; printf("\r\nSelect bank:\r\n0 - Bank 0\r\n1 - Bank 1");
-       pea       @m68kus~1_8.L
+       pea       @m68kus~1_3.L
        jsr       _printf
        addq.w    #4,A7
 ; asdf = getchar();
@@ -1298,7 +1319,7 @@ GetBank_1:
 ; if(asdf == '0'){
        cmp.b     #48,D2
        bne.s     GetBank_4
-; *bank = 0xA0;
+; *bank = EEPROM_SLAVE_BANK0;
        move.l    8(A6),A0
        move.b    #160,(A0)
 ; break;
@@ -1308,7 +1329,7 @@ GetBank_4:
 ; else if (asdf == '1'){
        cmp.b     #49,D2
        bne.s     GetBank_6
-; *bank = 0xA8;
+; *bank = EEPROM_SLAVE_BANK1;
        move.l    8(A6),A0
        move.b    #168,(A0)
 ; break;
@@ -1317,7 +1338,7 @@ GetBank_6:
 ; }
 ; else{
 ; printf("\r\nInvalid selection.");
-       pea       @m68kus~1_9.L
+       pea       @m68kus~1_4.L
        jsr       _printf
        addq.w    #4,A7
        bra       GetBank_1
@@ -1333,7 +1354,7 @@ GetBank_3:
 _GetMemAddr:
        link      A6,#0
 ; printf("\r\nEnter mem address hi:");
-       pea       @m68kus~1_10.L
+       pea       @m68kus~1_5.L
        jsr       _printf
        addq.w    #4,A7
 ; *hi = Get2HexDigits(0);
@@ -1343,7 +1364,7 @@ _GetMemAddr:
        move.l    8(A6),A0
        move.b    D0,(A0)
 ; printf("\r\nEnter mem address lo:");
-       pea       @m68kus~1_11.L
+       pea       @m68kus~1_6.L
        jsr       _printf
        addq.w    #4,A7
 ; *lo = Get2HexDigits(0);
@@ -1355,6 +1376,200 @@ _GetMemAddr:
        unlk      A6
        rts
 ; // TODO: Hex digit validation?
+; }
+; void blinky(){
+       xdef      _blinky
+_blinky:
+       movem.l   A2/A3,-(A7)
+       lea       _TransmitI2C.L,A2
+       lea       _Wait250ms.L,A3
+; // Make sure nothing is going on in the I2C bus 
+; WaitForTIPFlagReset();
+       jsr       _WaitForTIPFlagReset
+; // Write address
+; TransmitI2C(ADCDAC_SLAVE, WSTART);
+       pea       145
+       pea       144
+       jsr       (A2)
+       addq.w    #8,A7
+; // Set control to OUT: 8'b01xx_0xxx
+; TransmitI2C(DAC_OUT_ON, WRITE);
+       pea       16
+       pea       64
+       jsr       (A2)
+       addq.w    #8,A7
+; // Vout calculation: 5/256 * 8 bit data
+; // Blinky until reset is pressed on DE1
+; while(1){
+blinky_1:
+; TransmitI2C(0xFF, WRITE);
+       pea       16
+       pea       255
+       jsr       (A2)
+       addq.w    #8,A7
+; Wait250ms();
+       jsr       (A3)
+; TransmitI2C(0x00, WRITE);
+       pea       16
+       clr.l     -(A7)
+       jsr       (A2)
+       addq.w    #8,A7
+; Wait250ms();
+       jsr       (A3)
+; TransmitI2C(0xFF, WRITE);
+       pea       16
+       pea       255
+       jsr       (A2)
+       addq.w    #8,A7
+; Wait250ms();
+       jsr       (A3)
+; TransmitI2C(0x00, WRITE);
+       pea       16
+       clr.l     -(A7)
+       jsr       (A2)
+       addq.w    #8,A7
+; Wait250ms();
+       jsr       (A3)
+; TransmitI2C(0xFF, WRITE);
+       pea       16
+       pea       255
+       jsr       (A2)
+       addq.w    #8,A7
+; Wait750ms();
+       jsr       _Wait750ms
+; TransmitI2C(0x00, WRITE);
+       pea       16
+       clr.l     -(A7)
+       jsr       (A2)
+       addq.w    #8,A7
+; Wait750ms();
+       jsr       _Wait750ms
+       bra       blinky_1
+; }
+; }
+; // AN0: External analog source (remove jumper)
+; // 2. AN1: On board potentiometer to supply a variable voltage.
+; // 3. AN2: On board thermistor to measure temperature
+; // 4. AN3: On board photo resistor to measure light intensity
+; // 5. OUT: A RED LED which can be driven by the D/A output. 
+; void readADC(void){
+       xdef      _readADC
+_readADC:
+       link      A6,#-4
+       movem.l   A2/A3,-(A7)
+       lea       _printf.L,A2
+       lea       _TransmitI2C.L,A3
+; char Vchannel1, Vchannel2, Vchannel3, Vchannel4;
+; while(1){
+readADC_1:
+; // Make sure nothing is going on in the I2C bus 
+; WaitForTIPFlagReset();
+       jsr       _WaitForTIPFlagReset
+; // Write address
+; TransmitI2C(ADCDAC_SLAVE, WSTART);
+       pea       145
+       pea       144
+       jsr       (A3)
+       addq.w    #8,A7
+; // Set control to auto increment starting at 1: 8'b0000_0101
+; TransmitI2C(ADC_AUTO_INCREMENT_A0, WRITE);
+       pea       16
+       pea       4
+       jsr       (A3)
+       addq.w    #8,A7
+; // Set slave to Read mode
+; TransmitI2C(ADCDAC_SLAVE | 1, WSTART);
+       pea       145
+       pea       145
+       jsr       (A3)
+       addq.w    #8,A7
+; // Read data transmit register, set R bit, set ACK
+; I2C_CR = READACK;
+       move.b    #33,4227080
+; // Wait for read data to come in
+; while((I2C_SR & 1) !=1){}
+readADC_4:
+       move.b    4227080,D0
+       and.b     #1,D0
+       cmp.b     #1,D0
+       beq.s     readADC_6
+       bra       readADC_4
+readADC_6:
+; Vchannel4 = I2C_RXR; // This is always invalid because the jumper isn't connected
+       move.b    4227078,-1(A6)
+; I2C_CR = READACK;
+       move.b    #33,4227080
+; while((I2C_SR & 1) !=1){}
+readADC_7:
+       move.b    4227080,D0
+       and.b     #1,D0
+       cmp.b     #1,D0
+       beq.s     readADC_9
+       bra       readADC_7
+readADC_9:
+; Vchannel1 = I2C_RXR;
+       move.b    4227078,-4(A6)
+; I2C_CR = READACK;
+       move.b    #33,4227080
+; // Wait for read data to come in
+; while((I2C_SR & 1) !=1){}
+readADC_10:
+       move.b    4227080,D0
+       and.b     #1,D0
+       cmp.b     #1,D0
+       beq.s     readADC_12
+       bra       readADC_10
+readADC_12:
+; Vchannel2 = I2C_RXR;
+       move.b    4227078,-3(A6)
+; I2C_CR = READACK;
+       move.b    #33,4227080
+; // Wait for read data to come in
+; while((I2C_SR & 1) !=1){}
+readADC_13:
+       move.b    4227080,D0
+       and.b     #1,D0
+       cmp.b     #1,D0
+       beq.s     readADC_15
+       bra       readADC_13
+readADC_15:
+; Vchannel3 = I2C_RXR;
+       move.b    4227078,-2(A6)
+; I2C_CR = 0x41;
+       move.b    #65,4227080
+; // Vout calculation: 5/256 * 8 bit data, but we can just leave it.
+; printf("\r\nThermistor: %d", Vchannel1 );
+       move.b    -4(A6),D1
+       ext.w     D1
+       ext.l     D1
+       move.l    D1,-(A7)
+       pea       @m68kus~1_7.L
+       jsr       (A2)
+       addq.w    #8,A7
+; printf("\r\nPotentiometer: %d", Vchannel2 );
+       move.b    -3(A6),D1
+       ext.w     D1
+       ext.l     D1
+       move.l    D1,-(A7)
+       pea       @m68kus~1_8.L
+       jsr       (A2)
+       addq.w    #8,A7
+; printf("\r\nPhotoresistor: %d", Vchannel3);
+       move.b    -2(A6),D1
+       ext.w     D1
+       ext.l     D1
+       move.l    D1,-(A7)
+       pea       @m68kus~1_9.L
+       jsr       (A2)
+       addq.w    #8,A7
+; printf("\r\n--------------");
+       pea       @m68kus~1_10.L
+       jsr       (A2)
+       addq.w    #4,A7
+; Wait1s();
+       jsr       _Wait1s
+       bra       readADC_1
+; }
 ; }
 ; /*********************************************************************************************************************************
 ; **  IMPORTANT FUNCTION
@@ -1476,13 +1691,13 @@ _main:
 ; // printf("%x\n", I2C_CR);
 ; // printf("%x\n", I2C_SR);
 ; printf("\r\nLab 5: I2C");
-       pea       @m68kus~1_12.L
+       pea       @m68kus~1_11.L
        jsr       (A2)
        addq.w    #4,A7
 ; while(1){
 main_1:
-; printf("\r\nChoose the following:\r\n0 - Write Byte\r\n1 - Read Byte\r\n2 - Page Write\r\n3 - Page Read\r\n4 - ADC stuff todo\r\n");
-       pea       @m68kus~1_13.L
+; printf("\r\nChoose the following:\r\n0 - Write Byte\r\n1 - Read Byte\r\n2 - Page Write\r\n3 - Page Read\r\n4 - DAC Blinky LED\r\n5 - ADC Read");
+       pea       @m68kus~1_12.L
        jsr       (A2)
        addq.w    #4,A7
 ; asdf = getchar();
@@ -1499,7 +1714,7 @@ main_1:
        cmp.b     #48,D0
        bne       main_4
 ; printf("\r\nEnter byte to write: ");
-       pea       @m68kus~1_14.L
+       pea       @m68kus~1_13.L
        jsr       (A2)
        addq.w    #4,A7
 ; asdf = Get2HexDigits(0);
@@ -1537,7 +1752,7 @@ main_1:
        move.l    D1,-(A7)
        jsr       _WriteI2CChar
        add.w     #16,A7
-; printf("\r\nWritten %x to bank %d at memaddr hi: %x mem addr lo: %x", asdf, bank == 0xA0 ? 0:1, asdf2, asdf1);
+; printf("\r\nWritten %x to bank %d at memaddr hi: %x mem addr lo: %x", asdf, bank == EEPROM_SLAVE_BANK0 ? 0:1, asdf2, asdf1);
        move.b    (A4),D1
        and.l     #255,D1
        move.l    D1,-(A7)
@@ -1559,10 +1774,10 @@ main_7:
        move.b    -653(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_15.L
+       pea       @m68kus~1_14.L
        jsr       (A2)
        add.w     #20,A7
-       bra       main_27
+       bra       main_29
 main_4:
 ; }
 ; else if(asdf == '1'){
@@ -1596,7 +1811,7 @@ main_4:
        pea       -650(A6)
        jsr       _ReadI2CChar
        add.w     #16,A7
-; printf("\r\nRead %x from bank %d at memaddr hi: %x mem addr lo: %x", asdf3, bank == 0xA0 ? 0:1, asdf, asdf1);
+; printf("\r\nRead %x from bank %d at memaddr hi: %x mem addr lo: %x", asdf3, bank == EEPROM_SLAVE_BANK0 ? 0:1, asdf, asdf1);
        move.b    (A4),D1
        and.l     #255,D1
        move.l    D1,-(A7)
@@ -1618,10 +1833,10 @@ main_11:
        move.b    -650(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_16.L
+       pea       @m68kus~1_15.L
        jsr       (A2)
        add.w     #20,A7
-       bra       main_27
+       bra       main_29
 main_8:
 ; }
 ; else if(asdf == '2'){
@@ -1629,10 +1844,10 @@ main_8:
        cmp.b     #50,D0
        bne       main_12
 ; printf("\r\nbruh");printf("\r\nEnter size of page to write(max 128 in hex == 0x7F): ");
-       pea       @m68kus~1_17.L
+       pea       @m68kus~1_16.L
        jsr       (A2)
        addq.w    #4,A7
-       pea       @m68kus~1_18.L
+       pea       @m68kus~1_17.L
        jsr       (A2)
        addq.w    #4,A7
 ; size = Get2HexDigits(0);
@@ -1669,7 +1884,7 @@ main_8:
        move.l    D1,-(A7)
        jsr       _WriteI2CPage
        add.w     #16,A7
-; printf("\r\nWrote values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == 0xA0 ? 0:1,size);
+; printf("\r\nWrote values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == EEPROM_SLAVE_BANK0 ? 0:1,size);
        ext.w     D3
        ext.l     D3
        move.l    D3,-(A7)
@@ -1691,7 +1906,7 @@ main_15:
        move.b    -651(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_19.L
+       pea       @m68kus~1_18.L
        jsr       (A2)
        add.w     #20,A7
 ; for(i = 0; i < size; i++){
@@ -1703,13 +1918,13 @@ main_16:
        ext.w     D2
        ext.l     D2
        move.l    D2,-(A7)
-       pea       @m68kus~1_20.L
+       pea       @m68kus~1_19.L
        jsr       (A2)
        addq.w    #8,A7
        addq.b    #1,D2
        bra       main_16
 main_18:
-       bra       main_27
+       bra       main_29
 main_12:
 ; }
 ; }
@@ -1717,11 +1932,8 @@ main_12:
        move.b    -653(A6),D0
        cmp.b     #51,D0
        bne       main_19
-; printf("\r\nbruh");printf("\r\nEnter size of page to read(max 128 in hex == 0x7F): ");
-       pea       @m68kus~1_17.L
-       jsr       (A2)
-       addq.w    #4,A7
-       pea       @m68kus~1_21.L
+; printf("\r\nEnter size of page to read(max 128 in hex == 0x7F): ");
+       pea       @m68kus~1_20.L
        jsr       (A2)
        addq.w    #4,A7
 ; size = Get2HexDigits(0);
@@ -1759,7 +1971,7 @@ main_12:
        pea       -132(A6)
        jsr       _ReadI2CPage
        add.w     #20,A7
-; printf("\r\nRead values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == 0xA0 ? 0:1,size);
+; printf("\r\nRead values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == EEPROM_SLAVE_BANK0 ? 0:1,size);
        ext.w     D3
        ext.l     D3
        move.l    D3,-(A7)
@@ -1781,7 +1993,7 @@ main_22:
        move.b    -651(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_22.L
+       pea       @m68kus~1_21.L
        jsr       (A2)
        add.w     #20,A7
 ; for(i = 0; i < size; i++){
@@ -1797,13 +2009,13 @@ main_23:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_20.L
+       pea       @m68kus~1_19.L
        jsr       (A2)
        addq.w    #8,A7
        addq.b    #1,D2
        bra       main_23
 main_25:
-       bra.s     main_27
+       bra       main_29
 main_19:
 ; }
 ; }
@@ -1811,96 +2023,110 @@ main_19:
        move.b    -653(A6),D0
        cmp.b     #52,D0
        bne.s     main_26
-; printf("\r\nbruh");
-       pea       @m68kus~1_17.L
+; printf("\r\nDAC Blinky... frequency of blinky is: \r\nON - 250ms - OFF - 250ms\r\n0N - 250ms - OFF - 250ms\r\nON - 750ms - OFF - 750ms\r\nRepeat forever\r\n");
+       pea       @m68kus~1_22.L
        jsr       (A2)
        addq.w    #4,A7
-       bra.s     main_27
+; blinky();
+       jsr       _blinky
+       bra.s     main_29
 main_26:
 ; }
-; else{
-; printf("\r\nInvalid Selection.\r\n");
+; else if(asdf == '5'){
+       move.b    -653(A6),D0
+       cmp.b     #53,D0
+       bne.s     main_28
+; printf("\r\nADC Channel Output:");
        pea       @m68kus~1_23.L
        jsr       (A2)
        addq.w    #4,A7
+; readADC();
+       jsr       _readADC
+       bra.s     main_29
+main_28:
+; }
+; else{
+; printf("\r\nInvalid Selection.\r\n");
+       pea       @m68kus~1_24.L
+       jsr       (A2)
+       addq.w    #4,A7
 ; continue;
-       bra       main_27
-main_27:
+       bra       main_29
+main_29:
        bra       main_1
 ; }   
 ; }
 ; }
        section   const
 @m68kus~1_1:
-       dc.b      13,10,32,100,97,116,97,32,105,115,32,37,100
-       dc.b      13,10,0
-@m68kus~1_2:
-       dc.b      13,10,32,115,108,97,118,101,97,100,100,114,32
-       dc.b      37,120,13,10,0
-@m68kus~1_3:
-       dc.b      13,10,32,109,101,109,97,100,100,114,104,105
-       dc.b      32,105,115,32,37,100,13,10,0
-@m68kus~1_4:
-       dc.b      13,10,32,109,101,109,97,100,100,114,108,111
-       dc.b      32,105,115,32,37,100,13,10,0
-@m68kus~1_5:
-       dc.b      13,10,32,37,120,32,37,120,37,120,0
-@m68kus~1_6:
        dc.b      13,10,32,67,104,97,110,103,105,110,103,32,115
        dc.b      108,97,118,101,32,97,110,100,32,114,101,115
        dc.b      116,97,114,116,32,37,120,0
-@m68kus~1_7:
+@m68kus~1_2:
        dc.b      13,10,32,72,73,84,32,69,68,71,69,32,67,65,83
        dc.b      69,32,37,120,32,37,120,37,120,0
-@m68kus~1_8:
+@m68kus~1_3:
        dc.b      13,10,83,101,108,101,99,116,32,98,97,110,107
        dc.b      58,13,10,48,32,45,32,66,97,110,107,32,48,13
        dc.b      10,49,32,45,32,66,97,110,107,32,49,0
-@m68kus~1_9:
+@m68kus~1_4:
        dc.b      13,10,73,110,118,97,108,105,100,32,115,101,108
        dc.b      101,99,116,105,111,110,46,0
-@m68kus~1_10:
+@m68kus~1_5:
        dc.b      13,10,69,110,116,101,114,32,109,101,109,32,97
        dc.b      100,100,114,101,115,115,32,104,105,58,0
-@m68kus~1_11:
+@m68kus~1_6:
        dc.b      13,10,69,110,116,101,114,32,109,101,109,32,97
        dc.b      100,100,114,101,115,115,32,108,111,58,0
-@m68kus~1_12:
+@m68kus~1_7:
+       dc.b      13,10,84,104,101,114,109,105,115,116,111,114
+       dc.b      58,32,37,100,0
+@m68kus~1_8:
+       dc.b      13,10,80,111,116,101,110,116,105,111,109,101
+       dc.b      116,101,114,58,32,37,100,0
+@m68kus~1_9:
+       dc.b      13,10,80,104,111,116,111,114,101,115,105,115
+       dc.b      116,111,114,58,32,37,100,0
+@m68kus~1_10:
+       dc.b      13,10,45,45,45,45,45,45,45,45,45,45,45,45,45
+       dc.b      45,0
+@m68kus~1_11:
        dc.b      13,10,76,97,98,32,53,58,32,73,50,67,0
-@m68kus~1_13:
+@m68kus~1_12:
        dc.b      13,10,67,104,111,111,115,101,32,116,104,101
        dc.b      32,102,111,108,108,111,119,105,110,103,58,13
        dc.b      10,48,32,45,32,87,114,105,116,101,32,66,121
        dc.b      116,101,13,10,49,32,45,32,82,101,97,100,32,66
        dc.b      121,116,101,13,10,50,32,45,32,80,97,103,101
        dc.b      32,87,114,105,116,101,13,10,51,32,45,32,80,97
-       dc.b      103,101,32,82,101,97,100,13,10,52,32,45,32,65
-       dc.b      68,67,32,115,116,117,102,102,32,116,111,100
-       dc.b      111,13,10,0
-@m68kus~1_14:
+       dc.b      103,101,32,82,101,97,100,13,10,52,32,45,32,68
+       dc.b      65,67,32,66,108,105,110,107,121,32,76,69,68
+       dc.b      13,10,53,32,45,32,65,68,67,32,82,101,97,100
+       dc.b      0
+@m68kus~1_13:
        dc.b      13,10,69,110,116,101,114,32,98,121,116,101,32
        dc.b      116,111,32,119,114,105,116,101,58,32,0
-@m68kus~1_15:
+@m68kus~1_14:
        dc.b      13,10,87,114,105,116,116,101,110,32,37,120,32
        dc.b      116,111,32,98,97,110,107,32,37,100,32,97,116
        dc.b      32,109,101,109,97,100,100,114,32,104,105,58
        dc.b      32,37,120,32,109,101,109,32,97,100,100,114,32
        dc.b      108,111,58,32,37,120,0
-@m68kus~1_16:
+@m68kus~1_15:
        dc.b      13,10,82,101,97,100,32,37,120,32,102,114,111
        dc.b      109,32,98,97,110,107,32,37,100,32,97,116,32
        dc.b      109,101,109,97,100,100,114,32,104,105,58,32
        dc.b      37,120,32,109,101,109,32,97,100,100,114,32,108
        dc.b      111,58,32,37,120,0
-@m68kus~1_17:
+@m68kus~1_16:
        dc.b      13,10,98,114,117,104,0
-@m68kus~1_18:
+@m68kus~1_17:
        dc.b      13,10,69,110,116,101,114,32,115,105,122,101
        dc.b      32,111,102,32,112,97,103,101,32,116,111,32,119
        dc.b      114,105,116,101,40,109,97,120,32,49,50,56,32
        dc.b      105,110,32,104,101,120,32,61,61,32,48,120,55
        dc.b      70,41,58,32,0
-@m68kus~1_19:
+@m68kus~1_18:
        dc.b      13,10,87,114,111,116,101,32,118,97,108,117,101
        dc.b      115,32,115,116,97,114,116,105,110,103,32,97
        dc.b      116,32,109,101,109,97,100,100,114,32,48,120
@@ -1908,22 +2134,37 @@ main_27:
        dc.b      32,37,100,44,32,116,111,116,97,108,32,115,105
        dc.b      122,101,58,32,37,120,13,10,68,97,116,97,58,32
        dc.b      0
-@m68kus~1_20:
+@m68kus~1_19:
        dc.b      37,120,0
-@m68kus~1_21:
+@m68kus~1_20:
        dc.b      13,10,69,110,116,101,114,32,115,105,122,101
        dc.b      32,111,102,32,112,97,103,101,32,116,111,32,114
        dc.b      101,97,100,40,109,97,120,32,49,50,56,32,105
        dc.b      110,32,104,101,120,32,61,61,32,48,120,55,70
        dc.b      41,58,32,0
-@m68kus~1_22:
+@m68kus~1_21:
        dc.b      13,10,82,101,97,100,32,118,97,108,117,101,115
        dc.b      32,115,116,97,114,116,105,110,103,32,97,116
        dc.b      32,109,101,109,97,100,100,114,32,48,120,37,120
        dc.b      37,120,32,97,110,100,32,98,97,110,107,32,37
        dc.b      100,44,32,116,111,116,97,108,32,115,105,122
        dc.b      101,58,32,37,120,13,10,68,97,116,97,58,32,0
+@m68kus~1_22:
+       dc.b      13,10,68,65,67,32,66,108,105,110,107,121,46
+       dc.b      46,46,32,102,114,101,113,117,101,110,99,121
+       dc.b      32,111,102,32,98,108,105,110,107,121,32,105
+       dc.b      115,58,32,13,10,79,78,32,45,32,50,53,48,109
+       dc.b      115,32,45,32,79,70,70,32,45,32,50,53,48,109
+       dc.b      115,13,10,48,78,32,45,32,50,53,48,109,115,32
+       dc.b      45,32,79,70,70,32,45,32,50,53,48,109,115,13
+       dc.b      10,79,78,32,45,32,55,53,48,109,115,32,45,32
+       dc.b      79,70,70,32,45,32,55,53,48,109,115,13,10,82
+       dc.b      101,112,101,97,116,32,102,111,114,101,118,101
+       dc.b      114,13,10,0
 @m68kus~1_23:
+       dc.b      13,10,65,68,67,32,67,104,97,110,110,101,108
+       dc.b      32,79,117,116,112,117,116,58,0
+@m68kus~1_24:
        dc.b      13,10,73,110,118,97,108,105,100,32,83,101,108
        dc.b      101,99,116,105,111,110,46,13,10,0
        section   bss

@@ -112,7 +112,16 @@
 // R bit == cmd[5], NACK bit == cmd[3], IACK bit == cmd[0] -> 8'b0010_0001
 #define READACK 0x21
 
-
+#define EEPROM_SLAVE_BANK0 0xA0
+#define EEPROM_SLAVE_BANK1 0xA8
+#define ADCDAC_SLAVE 0x90
+// 8'b01xx_0xxx
+#define DAC_OUT_ON 0x40
+// 8'b00xx_0xxx
+#define DAC_OUT_OFF 0x00
+// 8'b0000_0101
+#define ADC_AUTO_INCREMENT_A1 0x05
+#define ADC_AUTO_INCREMENT_A0 0x04
 
 /*********************************************************************************************************************************
 (( DO NOT initialise global variables here, do it main even if you want 0
@@ -128,6 +137,9 @@ unsigned char Timer1Count, Timer2Count, Timer3Count, Timer4Count ;
 *******************************************************************************************/
 void Wait1ms(void);
 void Wait3ms(void);
+void Wait250ms(void);
+void Wait750ms(void);
+void Wait1s(void);
 void Init_LCD(void) ;
 void LCDOutchar(int c);
 void LCDOutMess(char *theMessage);
@@ -149,6 +161,7 @@ void ReadI2CPage(char *data, char slave_addr, char memaddr_hi, char memaddr_lo, 
 void GetMemAddr(char *hi, char *lo);
 void GetBank(char *bank);
 void Wait(void);
+void readADC(void);
 
 /*****************************************************************************************
 **	Interrupt service routine for Timers
@@ -264,6 +277,29 @@ void Wait3ms(void)
     int i ;
     for(i = 0; i < 3; i++)
         Wait1ms() ;
+}
+
+void Wait250ms(void)
+{
+    int i ;
+    for(i = 0; i < 250; i++)
+        Wait1ms() ;
+}
+
+void Wait750ms(void)
+{
+    int i ;
+    for(i = 0; i < 750; i++)
+        Wait1ms() ;
+}
+
+/************************************************************************************
+**  Subroutine to give the 68000 something useless to do to waste 1s
+**************************************************************************************/
+void Wait1s(void){
+    int i;
+    for(i = 0; i < 1000; i++)
+        Wait1ms();
 }
 
 /*********************************************************************************************
@@ -428,10 +464,6 @@ void TransmitI2C(char data, char cr){
 
 // Assumptions: addr is at most 7 bits wide
 void WriteI2CChar(char data, char slave_addr, char memaddr_hi, char memaddr_lo){
-      printf("\r\n data is %d\r\n", data);
-    printf("\r\n slaveaddr %x\r\n", slave_addr);
-    printf("\r\n memaddrhi is %d\r\n", memaddr_hi);
-    printf("\r\n memaddrlo is %d\r\n", memaddr_lo);
     // Check before doing anything
     WaitForTIPFlagReset();
     // Set slave to write mode, Generate start command
@@ -466,10 +498,10 @@ void ReadI2CChar(char *data, char slave_addr, char memaddr_hi, char memaddr_lo){
 void incrI2C(char *slave_addr, char *memaddr_hi, char *memaddr_lo, int read){
     char zeewo = 0x00;
     char one = 0x01;
-    printf("\r\n %x %x%x", *slave_addr, *memaddr_hi, *memaddr_lo);
+    // printf("\r\n %x %x%x", *slave_addr, *memaddr_hi, *memaddr_lo);
     if ((*memaddr_lo & 0xFF) == 0xFF){
         if ((*memaddr_hi & 0xFF) == 0xFF){ // Change bank
-            *slave_addr = ((*slave_addr & 0x8) == 0x8) ? 0xA0 : 0xA8;
+            *slave_addr = ((*slave_addr & 0x8) == 0x8) ? EEPROM_SLAVE_BANK0 : EEPROM_SLAVE_BANK1;
             *memaddr_lo = zeewo;
             *memaddr_hi = zeewo;
             
@@ -560,11 +592,11 @@ void GetBank(char *bank){
         asdf = getchar();
         putchar(asdf);
         if(asdf == '0'){
-            *bank = 0xA0;
+            *bank = EEPROM_SLAVE_BANK0;
             break;
         }
         else if (asdf == '1'){
-            *bank = 0xA8;
+            *bank = EEPROM_SLAVE_BANK1;
             break;
         }
         else{
@@ -579,6 +611,74 @@ void GetMemAddr(char *hi, char *lo){
     printf("\r\nEnter mem address lo:");
     *lo = Get2HexDigits(0);
     // TODO: Hex digit validation?
+}
+
+void blinky(){
+    // Make sure nothing is going on in the I2C bus 
+    WaitForTIPFlagReset();
+    // Write address
+    TransmitI2C(ADCDAC_SLAVE, WSTART);
+    // Set control to OUT: 8'b01xx_0xxx
+    TransmitI2C(DAC_OUT_ON, WRITE);
+    // Vout calculation: 5/256 * 8 bit data
+    // Blinky until reset is pressed on DE1
+    while(1){
+        TransmitI2C(0xFF, WRITE);
+        Wait250ms();
+        TransmitI2C(0x00, WRITE);
+        Wait250ms();
+        TransmitI2C(0xFF, WRITE);
+        Wait250ms();
+        TransmitI2C(0x00, WRITE);
+        Wait250ms();
+        TransmitI2C(0xFF, WRITE);
+        Wait750ms();
+        TransmitI2C(0x00, WRITE);
+        Wait750ms();
+    }
+}
+// AN0: External analog source (remove jumper)
+// 2. AN1: On board potentiometer to supply a variable voltage.
+// 3. AN2: On board thermistor to measure temperature
+// 4. AN3: On board photo resistor to measure light intensity
+// 5. OUT: A RED LED which can be driven by the D/A output. 
+
+void readADC(void){
+    char Vchannel1, Vchannel2, Vchannel3, Vchannel4;
+    
+    while(1){
+        // Make sure nothing is going on in the I2C bus 
+        WaitForTIPFlagReset();
+        // Write address
+        TransmitI2C(ADCDAC_SLAVE, WSTART);
+        // Set control to auto increment starting at 1: 8'b0000_0101
+        TransmitI2C(ADC_AUTO_INCREMENT_A0, WRITE);
+        // Set slave to Read mode
+        TransmitI2C(ADCDAC_SLAVE | 1, WSTART);
+        // Read data transmit register, set R bit, set ACK
+        I2C_CR = READACK;
+        // Wait for read data to come in
+        while((I2C_SR & 1) !=1){}
+        Vchannel4 = I2C_RXR; // This is always invalid because the jumper isn't connected
+        I2C_CR = READACK;
+        while((I2C_SR & 1) !=1){}
+        Vchannel1 = I2C_RXR;
+        I2C_CR = READACK;
+        // Wait for read data to come in
+        while((I2C_SR & 1) !=1){}
+        Vchannel2 = I2C_RXR;
+        I2C_CR = READACK;
+        // Wait for read data to come in
+        while((I2C_SR & 1) !=1){}
+        Vchannel3 = I2C_RXR;
+        I2C_CR = 0x41;
+        // Vout calculation: 5/256 * 8 bit data, but we can just leave it.
+        printf("\r\nThermistor: %d", Vchannel1 );
+        printf("\r\nPotentiometer: %d", Vchannel2 );
+        printf("\r\nPhotoresistor: %d", Vchannel3);
+        printf("\r\n--------------");
+        Wait1s();
+    }
 }
 /*********************************************************************************************************************************
 **  IMPORTANT FUNCTION
@@ -653,7 +753,7 @@ void main()
     printf("\r\nLab 5: I2C");
     while(1){
        
-        printf("\r\nChoose the following:\r\n0 - Write Byte\r\n1 - Read Byte\r\n2 - Page Write\r\n3 - Page Read\r\n4 - ADC stuff todo\r\n");
+        printf("\r\nChoose the following:\r\n0 - Write Byte\r\n1 - Read Byte\r\n2 - Page Write\r\n3 - Page Read\r\n4 - DAC Blinky LED\r\n5 - ADC Read");
         asdf = getchar();
         putchar(asdf);
         if(asdf == '0'){
@@ -664,7 +764,7 @@ void main()
             // Mem Address Selection
             GetMemAddr(&asdf2, &asdf1);
             WriteI2CChar(asdf, bank, asdf2, asdf1);
-            printf("\r\nWritten %x to bank %d at memaddr hi: %x mem addr lo: %x", asdf, bank == 0xA0 ? 0:1, asdf2, asdf1);
+            printf("\r\nWritten %x to bank %d at memaddr hi: %x mem addr lo: %x", asdf, bank == EEPROM_SLAVE_BANK0 ? 0:1, asdf2, asdf1);
         }
         else if(asdf == '1'){
             // Bank Selection
@@ -672,7 +772,7 @@ void main()
             // Mem Address Selection
             GetMemAddr(&asdf, &asdf1);
             ReadI2CChar(&asdf3, bank, asdf, asdf1);
-            printf("\r\nRead %x from bank %d at memaddr hi: %x mem addr lo: %x", asdf3, bank == 0xA0 ? 0:1, asdf, asdf1);
+            printf("\r\nRead %x from bank %d at memaddr hi: %x mem addr lo: %x", asdf3, bank == EEPROM_SLAVE_BANK0 ? 0:1, asdf, asdf1);
         }
         else if(asdf == '2'){
             printf("\r\nbruh");printf("\r\nEnter size of page to write(max 128 in hex == 0x7F): ");
@@ -682,29 +782,35 @@ void main()
             // Mem Address Selection
             GetMemAddr(&asdf2, &asdf1);
             WriteI2CPage(bank, asdf2, asdf1,size);
-            printf("\r\nWrote values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == 0xA0 ? 0:1,size);
+            printf("\r\nWrote values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == EEPROM_SLAVE_BANK0 ? 0:1,size);
             for(i = 0; i < size; i++){
                 printf("%x", i);
             }
         }
         else if(asdf == '3'){
-            printf("\r\nbruh");printf("\r\nEnter size of page to read(max 128 in hex == 0x7F): ");
+            printf("\r\nEnter size of page to read(max 128 in hex == 0x7F): ");
             size = Get2HexDigits(0);
             // Bank Selection
             GetBank(&bank);
             // Mem Address Selection
             GetMemAddr(&asdf2, &asdf1);
             ReadI2CPage(data, bank, asdf2, asdf1,size);
-            printf("\r\nRead values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == 0xA0 ? 0:1,size);
+            printf("\r\nRead values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == EEPROM_SLAVE_BANK0 ? 0:1,size);
             for(i = 0; i < size; i++){
                 printf("%x", data[i]);
             }
         }
         else if(asdf == '4'){
-            printf("\r\nbruh");
+            printf("\r\nDAC Blinky... frequency of blinky is: \r\nON - 250ms - OFF - 250ms\r\n0N - 250ms - OFF - 250ms\r\nON - 750ms - OFF - 750ms\r\nRepeat forever\r\n");
+            blinky();
+        }
+        else if(asdf == '5'){
+            printf("\r\nADC Channel Output:");
+            readADC();
         }
         else{
             printf("\r\nInvalid Selection.\r\n");
+            
             continue;
         }   
     }
