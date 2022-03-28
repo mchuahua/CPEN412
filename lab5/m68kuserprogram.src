@@ -41,7 +41,7 @@ Zeroinit        move.b    #0,(a0)+              copy the C program initialise va
 go_main         jsr       _main
                 bra       start
 
-; C:\USERS\MARTINCHUA\DESKTOP\CPEN412\CPEN412\LAB5\M68KUSERPROGRAM (DE1).C - Compiled by CC68K  Version 5.00 (c) 1991-2005  Peter J. Fondse
+; C:\USERS\MARTINCHUA\DESKTOP\CPEN412\CPEN412\LAB5\SUBMISSION\LAB5.C - Compiled by CC68K  Version 5.00 (c) 1991-2005  Peter J. Fondse
 ; #include <stdio.h>
 ; #include <string.h>
 ; #include <ctype.h>
@@ -897,19 +897,22 @@ ReadI2CChar_3:
        unlk      A6
        rts
 ; }
-; // Increment logic, handles bank overflows
-; void incrI2C(char *slave_addr, char *memaddr_hi, char *memaddr_lo, int read){
+; // Increment logic, handles bank overflows, handle write addressing boundaries
+; void incrI2C(char *slave_addr, char *memaddr_hi, char *memaddr_lo, int read, int addr_change){
 _incrI2C:
-       link      A6,#0
-       movem.l   D2/D3/D4/D5/D6/A2,-(A7)
+       link      A6,#-4
+       movem.l   D2/D3/D4/D5/D6/A2/A3,-(A7)
        lea       _TransmitI2C.L,A2
        move.l    8(A6),D2
        move.l    16(A6),D3
        move.l    12(A6),D4
+       lea       _printf.L,A3
 ; char zeewo = 0x00;
        clr.b     D5
 ; char one = 0x01;
        moveq     #1,D6
+; int edge = 0;
+       clr.l     -4(A6)
 ; // printf("\r\n %x %x%x", *slave_addr, *memaddr_hi, *memaddr_lo);
 ; if ((*memaddr_lo & 0xFF) == 0xFF){
        move.l    D3,A0
@@ -954,8 +957,8 @@ incrI2C_6:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_1.L
-       jsr       _printf
+       pea       @lab5_1.L
+       jsr       (A3)
        addq.w    #8,A7
 ; TransmitI2C(*slave_addr, WSTART);
        pea       145
@@ -1043,9 +1046,11 @@ incrI2C_8:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_2.L
-       jsr       _printf
+       pea       @lab5_2.L
+       jsr       (A3)
        add.w     #16,A7
+; edge = 1;
+       move.l    #1,-4(A6)
        bra.s     incrI2C_4
 incrI2C_3:
 ; }
@@ -1066,7 +1071,46 @@ incrI2C_1:
        move.l    D3,A0
        add.b     D6,(A0)
 incrI2C_2:
-       movem.l   (A7)+,D2/D3/D4/D5/D6/A2
+; }
+; if(read == 0 && addr_change == 1){
+       move.l    20(A6),D0
+       bne       incrI2C_9
+       move.l    24(A6),D0
+       cmp.l     #1,D0
+       bne       incrI2C_9
+; printf("\r\n Write address boundary, restarting without changing slave");
+       pea       @lab5_3.L
+       jsr       (A3)
+       addq.w    #4,A7
+; TransmitI2C(*slave_addr, WSTART);
+       pea       145
+       move.l    D2,A0
+       move.b    (A0),D1
+       ext.w     D1
+       ext.l     D1
+       move.l    D1,-(A7)
+       jsr       (A2)
+       addq.w    #8,A7
+; TransmitI2C(*memaddr_hi, WRITE);
+       pea       16
+       move.l    D4,A0
+       move.b    (A0),D1
+       ext.w     D1
+       ext.l     D1
+       move.l    D1,-(A7)
+       jsr       (A2)
+       addq.w    #8,A7
+; TransmitI2C(*memaddr_lo, WRITE);
+       pea       16
+       move.l    D3,A0
+       move.b    (A0),D1
+       ext.w     D1
+       ext.l     D1
+       move.l    D1,-(A7)
+       jsr       (A2)
+       addq.w    #8,A7
+incrI2C_9:
+       movem.l   (A7)+,D2/D3/D4/D5/D6/A2/A3
        unlk      A6
        rts
 ; }
@@ -1074,11 +1118,25 @@ incrI2C_2:
 ; void WriteI2CPage(char slave_addr, char memaddr_hi, char memaddr_lo, char size){
 _WriteI2CPage:
        link      A6,#0
-       movem.l   D2/A2,-(A7)
+       movem.l   D2/D3/D4/A2/A3,-(A7)
        lea       _TransmitI2C.L,A2
+       lea       _printf.L,A3
+       move.b    23(A6),D3
+       ext.w     D3
+       ext.l     D3
 ; // Data is array of size "size", max size 128
 ; // WriteI2CChar();
 ; char i;
+; int full_addr = (memaddr_hi) << 8 | memaddr_lo;
+       move.b    15(A6),D0
+       ext.w     D0
+       ext.l     D0
+       asl.l     #8,D0
+       move.b    19(A6),D1
+       ext.w     D1
+       ext.l     D1
+       or.l      D1,D0
+       move.l    D0,D4
 ; // Check before doing anything
 ; WaitForTIPFlagReset();
        jsr       _WaitForTIPFlagReset
@@ -1108,27 +1166,39 @@ _WriteI2CPage:
        move.l    D1,-(A7)
        jsr       (A2)
        addq.w    #8,A7
-; for (i = 0; i < size; i++){
+; for (i = 0; i <= size; i++){
        clr.b     D2
 WriteI2CPage_1:
-       cmp.b     23(A6),D2
-       bge       WriteI2CPage_3
-; // Write without stop unless we're at the end
-; if (i == (size-1) || ((memaddr_hi & 0xFF) == 0xFF) && ((memaddr_lo & 0xFF) == 0xFF)){
-       move.b    23(A6),D0
+       cmp.b     D3,D2
+       bgt       WriteI2CPage_3
+; // Write without stop unless we're at the end of a write boundary
+; if (i >= (size-1) || ((memaddr_hi & 0xFF) == 0xFF) && ((memaddr_lo & 0xFF) == 0xFF) || ((((full_addr+1) % 0x80) == 0))&& i !=0){
+       move.b    D3,D0
        subq.b    #1,D0
        cmp.b     D0,D2
-       beq.s     WriteI2CPage_6
+       bge       WriteI2CPage_6
        move.b    15(A6),D0
        ext.w     D0
        and.w     #255,D0
        cmp.w     #255,D0
-       bne.s     WriteI2CPage_4
+       bne.s     WriteI2CPage_7
        move.b    19(A6),D0
        ext.w     D0
        and.w     #255,D0
        cmp.w     #255,D0
-       bne.s     WriteI2CPage_4
+       beq.s     WriteI2CPage_6
+WriteI2CPage_7:
+       move.l    D4,D0
+       addq.l    #1,D0
+       move.l    D0,-(A7)
+       pea       128
+       jsr       LDIV
+       move.l    4(A7),D0
+       addq.w    #8,A7
+       tst.l     D0
+       bne       WriteI2CPage_4
+       tst.b     D2
+       beq       WriteI2CPage_4
 WriteI2CPage_6:
 ; TransmitI2C(i,WSTOP);
        pea       80
@@ -1137,6 +1207,42 @@ WriteI2CPage_6:
        move.l    D2,-(A7)
        jsr       (A2)
        addq.w    #8,A7
+; printf("\r\n--------------");
+       pea       @lab5_4.L
+       jsr       (A3)
+       addq.w    #4,A7
+; printf("\r\nfulladdr: %x", full_addr);
+       move.l    D4,-(A7)
+       pea       @lab5_5.L
+       jsr       (A3)
+       addq.w    #8,A7
+; printf("\r\ndata: %x", i);
+       ext.w     D2
+       ext.l     D2
+       move.l    D2,-(A7)
+       pea       @lab5_6.L
+       jsr       (A3)
+       addq.w    #8,A7
+; printf("\r\n--------------");
+       pea       @lab5_4.L
+       jsr       (A3)
+       addq.w    #4,A7
+; if(i != size)
+       cmp.b     D3,D2
+       beq.s     WriteI2CPage_8
+; incrI2C(&slave_addr, &memaddr_hi, &memaddr_lo, 0, 1);
+       pea       1
+       clr.l     -(A7)
+       pea       19(A6)
+       pea       15(A6)
+       pea       11(A6)
+       jsr       _incrI2C
+       add.w     #20,A7
+       bra.s     WriteI2CPage_9
+WriteI2CPage_8:
+; else return;
+       bra       WriteI2CPage_3
+WriteI2CPage_9:
        bra.s     WriteI2CPage_5
 WriteI2CPage_4:
 ; }
@@ -1148,36 +1254,38 @@ WriteI2CPage_4:
        move.l    D2,-(A7)
        jsr       (A2)
        addq.w    #8,A7
-WriteI2CPage_5:
-; }
 ; // Page crossing, if it happens, is handled inside incrI2C
-; incrI2C(&slave_addr, &memaddr_hi, &memaddr_lo, 0);
+; incrI2C(&slave_addr, &memaddr_hi, &memaddr_lo, 0, 0);
+       clr.l     -(A7)
        clr.l     -(A7)
        pea       19(A6)
        pea       15(A6)
        pea       11(A6)
        jsr       _incrI2C
-       add.w     #16,A7
+       add.w     #20,A7
+WriteI2CPage_5:
        addq.b    #1,D2
        bra       WriteI2CPage_1
 WriteI2CPage_3:
-       movem.l   (A7)+,D2/A2
+       movem.l   (A7)+,D2/D3/D4/A2/A3
        unlk      A6
        rts
+; }
+; // printf("%x ", full_addr);
 ; }
 ; }
 ; void ReadI2CPage(char *data, char slave_addr, char memaddr_hi, char memaddr_lo, char size){
 _ReadI2CPage:
        link      A6,#-4
        movem.l   D2/D3/A2,-(A7)
-       lea       _TransmitI2C.L,A2
        move.b    27(A6),D3
        ext.w     D3
        ext.l     D3
+       lea       _TransmitI2C.L,A2
 ; // Data is array of size "size", max size 128
 ; char i;
-; char temp = 0;
-       clr.b     -1(A6)
+; int temp = 0;
+       clr.l     -4(A6)
 ; // Check before doing anything
 ; WaitForTIPFlagReset();
        jsr       _WaitForTIPFlagReset
@@ -1217,16 +1325,14 @@ _ReadI2CPage:
        move.l    D1,-(A7)
        jsr       (A2)
        addq.w    #8,A7
-; for (i = 0; i < size; i++){
+; for (i = 0; i <= size; i++){
        clr.b     D2
 ReadI2CPage_1:
        cmp.b     D3,D2
-       bge       ReadI2CPage_3
+       bgt       ReadI2CPage_3
 ; // Read without NACK unless we're at the end
-; if (i == (size-1) || ((memaddr_hi & 0xFF) == 0xFF) && ((memaddr_lo & 0xFF) == 0xFF)){
-       move.b    D3,D0
-       subq.b    #1,D0
-       cmp.b     D0,D2
+; if (i == (size) || ((memaddr_hi & 0xFF) == 0xFF) && ((memaddr_lo & 0xFF) == 0xFF)){
+       cmp.b     D3,D2
        beq.s     ReadI2CPage_6
        move.b    19(A6),D0
        ext.w     D0
@@ -1261,10 +1367,8 @@ ReadI2CPage_9:
        ext.w     D2
        ext.l     D2
        move.b    4227078,0(A0,D2.L)
-; if (i == (size-1) || ((memaddr_hi & 0xFF) == 0xFF) && ((memaddr_lo & 0xFF) == 0xFF))
-       move.b    D3,D0
-       subq.b    #1,D0
-       cmp.b     D0,D2
+; if (i == (size) || ((memaddr_hi & 0xFF) == 0xFF) && ((memaddr_lo & 0xFF) == 0xFF))
+       cmp.b     D3,D2
        beq.s     ReadI2CPage_12
        move.b    19(A6),D0
        ext.w     D0
@@ -1286,13 +1390,19 @@ ReadI2CPage_10:
        move.b    #1,4227080
 ReadI2CPage_11:
 ; // Page crossing, if it happens, is handled inside incrI2C
-; incrI2C(&slave_addr, &memaddr_hi, &memaddr_lo, 1);
+; incrI2C(&slave_addr, &memaddr_hi, &memaddr_lo, 1 , 0);
+       clr.l     -(A7)
        pea       1
        pea       23(A6)
        pea       19(A6)
        pea       15(A6)
        jsr       _incrI2C
-       add.w     #16,A7
+       add.w     #20,A7
+; if (i == size) return;
+       cmp.b     D3,D2
+       bne.s     ReadI2CPage_13
+       bra.s     ReadI2CPage_3
+ReadI2CPage_13:
        addq.b    #1,D2
        bra       ReadI2CPage_1
 ReadI2CPage_3:
@@ -1309,7 +1419,7 @@ _GetBank:
 ; while(1){
 GetBank_1:
 ; printf("\r\nSelect bank:\r\n0 - Bank 0\r\n1 - Bank 1");
-       pea       @m68kus~1_3.L
+       pea       @lab5_7.L
        jsr       _printf
        addq.w    #4,A7
 ; asdf = getchar();
@@ -1343,7 +1453,7 @@ GetBank_6:
 ; }
 ; else{
 ; printf("\r\nInvalid selection.");
-       pea       @m68kus~1_4.L
+       pea       @lab5_8.L
        jsr       _printf
        addq.w    #4,A7
        bra       GetBank_1
@@ -1358,7 +1468,7 @@ GetBank_3:
 _GetMemAddr:
        link      A6,#0
 ; printf("\r\nEnter mem address hi:");
-       pea       @m68kus~1_5.L
+       pea       @lab5_9.L
        jsr       _printf
        addq.w    #4,A7
 ; *hi = Get2HexDigits(0);
@@ -1368,7 +1478,7 @@ _GetMemAddr:
        move.l    8(A6),A0
        move.b    D0,(A0)
 ; printf("\r\nEnter mem address lo:");
-       pea       @m68kus~1_6.L
+       pea       @lab5_10.L
        jsr       _printf
        addq.w    #4,A7
 ; *lo = Get2HexDigits(0);
@@ -1545,7 +1655,7 @@ readADC_15:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_7.L
+       pea       @lab5_11.L
        jsr       (A2)
        addq.w    #8,A7
 ; printf("\r\nPotentiometer: %d", Vchannel2 );
@@ -1553,7 +1663,7 @@ readADC_15:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_8.L
+       pea       @lab5_12.L
        jsr       (A2)
        addq.w    #8,A7
 ; printf("\r\nPhotoresistor: %d", Vchannel3);
@@ -1561,11 +1671,11 @@ readADC_15:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_9.L
+       pea       @lab5_13.L
        jsr       (A2)
        addq.w    #8,A7
 ; printf("\r\n--------------");
-       pea       @m68kus~1_10.L
+       pea       @lab5_4.L
        jsr       (A2)
        addq.w    #4,A7
 ; Wait1s();
@@ -1604,22 +1714,22 @@ _main:
        movem.l   D2/D3/A2/A3/A4/A5,-(A7)
        lea       _printf.L,A2
        lea       _InstallExceptionHandler.L,A3
-       lea       -652(A6),A4
+       lea       -654(A6),A4
        lea       _GetMemAddr.L,A5
 ; unsigned int row, j=0, count=0, counter1=1;
-       clr.l     -818(A6)
-       clr.l     -814(A6)
-       move.l    #1,-810(A6)
-; char i = 0;
-       clr.b     D2
+       clr.l     -820(A6)
+       clr.l     -816(A6)
+       move.l    #1,-812(A6)
+; int i = 0;
+       clr.l     D2
 ; char c, text[150] ;
 ; unsigned char asdf, asdf1, asdf2, asdf3, bank;
 ; unsigned char wBuf[256];
 ; unsigned char rBuf[256];
 ; int addr = 2048;
-       move.l    #2048,-136(A6)
+       move.l    #2048,-138(A6)
 ; char size;
-; char data[128];
+; char data[129];
 ; int PassFailFlag = 1 ;
        move.l    #1,-4(A6)
 ; i = x = y = z = PortA_Count =0;
@@ -1627,7 +1737,7 @@ _main:
        clr.l     _z.L
        clr.l     _y.L
        clr.l     _x.L
-       clr.b     D2
+       clr.l     D2
 ; Timer1Count = Timer2Count = Timer3Count = Timer4Count = 0;
        clr.b     _Timer4Count.L
        clr.b     _Timer3Count.L
@@ -1691,46 +1801,46 @@ _main:
 ; // printf("%x\n", I2C_CR);
 ; // printf("%x\n", I2C_SR);
 ; printf("\r\nLab 5: I2C");
-       pea       @m68kus~1_11.L
+       pea       @lab5_14.L
        jsr       (A2)
        addq.w    #4,A7
 ; while(1){
 main_1:
 ; printf("\r\nChoose the following:\r\n0 - Write Byte\r\n1 - Read Byte\r\n2 - Page Write\r\n3 - Page Read\r\n4 - DAC Blinky LED\r\n5 - ADC Read");
-       pea       @m68kus~1_12.L
+       pea       @lab5_15.L
        jsr       (A2)
        addq.w    #4,A7
 ; asdf = getchar();
        jsr       _getch
-       move.b    D0,-653(A6)
+       move.b    D0,-655(A6)
 ; putchar(asdf);
-       move.b    -653(A6),D1
+       move.b    -655(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
        jsr       _putch
        addq.w    #4,A7
 ; if(asdf == '0'){
-       move.b    -653(A6),D0
+       move.b    -655(A6),D0
        cmp.b     #48,D0
        bne       main_4
 ; printf("\r\nEnter byte to write: ");
-       pea       @m68kus~1_13.L
+       pea       @lab5_16.L
        jsr       (A2)
        addq.w    #4,A7
 ; asdf = Get2HexDigits(0);
        clr.l     -(A7)
        jsr       _Get2HexDigits
        addq.w    #4,A7
-       move.b    D0,-653(A6)
+       move.b    D0,-655(A6)
 ; // Bank Selection
 ; GetBank(&bank);
-       pea       -649(A6)
+       pea       -651(A6)
        jsr       _GetBank
        addq.w    #4,A7
 ; // Mem Address Selection
 ; GetMemAddr(&asdf2, &asdf1);
        move.l    A4,-(A7)
-       pea       -651(A6)
+       pea       -653(A6)
        jsr       (A5)
        addq.w    #8,A7
 ; WriteI2CChar(asdf, bank, asdf2, asdf1);
@@ -1738,15 +1848,15 @@ main_1:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
+       move.b    -653(A6),D1
+       ext.w     D1
+       ext.l     D1
+       move.l    D1,-(A7)
        move.b    -651(A6),D1
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       move.b    -649(A6),D1
-       ext.w     D1
-       ext.l     D1
-       move.l    D1,-(A7)
-       move.b    -653(A6),D1
+       move.b    -655(A6),D1
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
@@ -1756,10 +1866,10 @@ main_1:
        move.b    (A4),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       move.b    -651(A6),D1
+       move.b    -653(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       move.b    -649(A6),D1
+       move.b    -651(A6),D1
        and.w     #255,D1
        cmp.w     #160,D1
        bne.s     main_6
@@ -1771,28 +1881,28 @@ main_7:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       move.b    -653(A6),D1
+       move.b    -655(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_14.L
+       pea       @lab5_17.L
        jsr       (A2)
        add.w     #20,A7
        bra       main_29
 main_4:
 ; }
 ; else if(asdf == '1'){
-       move.b    -653(A6),D0
+       move.b    -655(A6),D0
        cmp.b     #49,D0
        bne       main_8
 ; // Bank Selection
 ; GetBank(&bank);
-       pea       -649(A6)
+       pea       -651(A6)
        jsr       _GetBank
        addq.w    #4,A7
 ; // Mem Address Selection
 ; GetMemAddr(&asdf, &asdf1);
        move.l    A4,-(A7)
-       pea       -653(A6)
+       pea       -655(A6)
        jsr       (A5)
        addq.w    #8,A7
 ; ReadI2CChar(&asdf3, bank, asdf, asdf1);
@@ -1800,25 +1910,25 @@ main_4:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       move.b    -653(A6),D1
+       move.b    -655(A6),D1
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       move.b    -649(A6),D1
+       move.b    -651(A6),D1
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       -650(A6)
+       pea       -652(A6)
        jsr       _ReadI2CChar
        add.w     #16,A7
 ; printf("\r\nRead %x from bank %d at memaddr hi: %x mem addr lo: %x", asdf3, bank == EEPROM_SLAVE_BANK0 ? 0:1, asdf, asdf1);
        move.b    (A4),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       move.b    -653(A6),D1
+       move.b    -655(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       move.b    -649(A6),D1
+       move.b    -651(A6),D1
        and.w     #255,D1
        cmp.w     #160,D1
        bne.s     main_10
@@ -1830,24 +1940,24 @@ main_11:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       move.b    -650(A6),D1
+       move.b    -652(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_15.L
+       pea       @lab5_18.L
        jsr       (A2)
        add.w     #20,A7
        bra       main_29
 main_8:
 ; }
 ; else if(asdf == '2'){
-       move.b    -653(A6),D0
+       move.b    -655(A6),D0
        cmp.b     #50,D0
        bne       main_12
 ; printf("\r\nbruh");printf("\r\nEnter size of page to write(max 128 in hex == 0x7F): ");
-       pea       @m68kus~1_16.L
+       pea       @lab5_19.L
        jsr       (A2)
        addq.w    #4,A7
-       pea       @m68kus~1_17.L
+       pea       @lab5_20.L
        jsr       (A2)
        addq.w    #4,A7
 ; size = Get2HexDigits(0);
@@ -1857,13 +1967,13 @@ main_8:
        move.b    D0,D3
 ; // Bank Selection
 ; GetBank(&bank);
-       pea       -649(A6)
+       pea       -651(A6)
        jsr       _GetBank
        addq.w    #4,A7
 ; // Mem Address Selection
 ; GetMemAddr(&asdf2, &asdf1);
        move.l    A4,-(A7)
-       pea       -651(A6)
+       pea       -653(A6)
        jsr       (A5)
        addq.w    #8,A7
 ; WriteI2CPage(bank, asdf2, asdf1,size);
@@ -1874,11 +1984,11 @@ main_8:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       move.b    -651(A6),D1
+       move.b    -653(A6),D1
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       move.b    -649(A6),D1
+       move.b    -651(A6),D1
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
@@ -1888,7 +1998,7 @@ main_8:
        ext.w     D3
        ext.l     D3
        move.l    D3,-(A7)
-       move.b    -649(A6),D1
+       move.b    -651(A6),D1
        and.w     #255,D1
        cmp.w     #160,D1
        bne.s     main_14
@@ -1903,25 +2013,25 @@ main_15:
        move.b    (A4),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       move.b    -651(A6),D1
+       move.b    -653(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_18.L
+       pea       @lab5_21.L
        jsr       (A2)
        add.w     #20,A7
-; for(i = 0; i < size; i++){
-       clr.b     D2
+; for(i = 0; i <= size; i++){
+       clr.l     D2
 main_16:
-       cmp.b     D3,D2
-       bge.s     main_18
-; printf("%x", i);
-       ext.w     D2
-       ext.l     D2
+       ext.w     D3
+       ext.l     D3
+       cmp.l     D3,D2
+       bgt.s     main_18
+; printf("%x ", i);
        move.l    D2,-(A7)
-       pea       @m68kus~1_19.L
+       pea       @lab5_22.L
        jsr       (A2)
        addq.w    #8,A7
-       addq.b    #1,D2
+       addq.l    #1,D2
        bra       main_16
 main_18:
        bra       main_29
@@ -1929,11 +2039,11 @@ main_12:
 ; }
 ; }
 ; else if(asdf == '3'){
-       move.b    -653(A6),D0
+       move.b    -655(A6),D0
        cmp.b     #51,D0
        bne       main_19
 ; printf("\r\nEnter size of page to read(max 128 in hex == 0x7F): ");
-       pea       @m68kus~1_20.L
+       pea       @lab5_23.L
        jsr       (A2)
        addq.w    #4,A7
 ; size = Get2HexDigits(0);
@@ -1943,13 +2053,13 @@ main_12:
        move.b    D0,D3
 ; // Bank Selection
 ; GetBank(&bank);
-       pea       -649(A6)
+       pea       -651(A6)
        jsr       _GetBank
        addq.w    #4,A7
 ; // Mem Address Selection
 ; GetMemAddr(&asdf2, &asdf1);
        move.l    A4,-(A7)
-       pea       -651(A6)
+       pea       -653(A6)
        jsr       (A5)
        addq.w    #8,A7
 ; ReadI2CPage(data, bank, asdf2, asdf1,size);
@@ -1960,22 +2070,22 @@ main_12:
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
+       move.b    -653(A6),D1
+       ext.w     D1
+       ext.l     D1
+       move.l    D1,-(A7)
        move.b    -651(A6),D1
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       move.b    -649(A6),D1
-       ext.w     D1
-       ext.l     D1
-       move.l    D1,-(A7)
-       pea       -132(A6)
+       pea       -134(A6)
        jsr       _ReadI2CPage
        add.w     #20,A7
 ; printf("\r\nRead values starting at memaddr 0x%x%x and bank %d, total size: %x\r\nData: ", asdf2, asdf1, bank == EEPROM_SLAVE_BANK0 ? 0:1,size);
        ext.w     D3
        ext.l     D3
        move.l    D3,-(A7)
-       move.b    -649(A6),D1
+       move.b    -651(A6),D1
        and.w     #255,D1
        cmp.w     #160,D1
        bne.s     main_21
@@ -1990,29 +2100,29 @@ main_22:
        move.b    (A4),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       move.b    -651(A6),D1
+       move.b    -653(A6),D1
        and.l     #255,D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_21.L
+       pea       @lab5_24.L
        jsr       (A2)
        add.w     #20,A7
-; for(i = 0; i < size; i++){
-       clr.b     D2
+; for(i = 0; (unsigned)i <= (unsigned)size; i++){
+       clr.l     D2
 main_23:
-       cmp.b     D3,D2
-       bge.s     main_25
+       ext.w     D3
+       ext.l     D3
+       cmp.l     D3,D2
+       bhi.s     main_25
 ; printf("%x", data[i]);
-       ext.w     D2
-       ext.l     D2
-       lea       -132(A6),A0
+       lea       -134(A6),A0
        move.b    0(A0,D2.L),D1
        ext.w     D1
        ext.l     D1
        move.l    D1,-(A7)
-       pea       @m68kus~1_19.L
+       pea       @lab5_25.L
        jsr       (A2)
        addq.w    #8,A7
-       addq.b    #1,D2
+       addq.l    #1,D2
        bra       main_23
 main_25:
        bra       main_29
@@ -2020,11 +2130,11 @@ main_19:
 ; }
 ; }
 ; else if(asdf == '4'){
-       move.b    -653(A6),D0
+       move.b    -655(A6),D0
        cmp.b     #52,D0
        bne.s     main_26
 ; printf("\r\nDAC Blinky... frequency of blinky is: \r\nON - 250ms - OFF - 250ms\r\n0N - 250ms - OFF - 250ms\r\nON - 750ms - OFF - 750ms\r\nRepeat forever\r\n");
-       pea       @m68kus~1_22.L
+       pea       @lab5_26.L
        jsr       (A2)
        addq.w    #4,A7
 ; blinky();
@@ -2033,11 +2143,11 @@ main_19:
 main_26:
 ; }
 ; else if(asdf == '5'){
-       move.b    -653(A6),D0
+       move.b    -655(A6),D0
        cmp.b     #53,D0
        bne.s     main_28
 ; printf("\r\nADC Channel Output:");
-       pea       @m68kus~1_23.L
+       pea       @lab5_27.L
        jsr       (A2)
        addq.w    #4,A7
 ; readADC();
@@ -2047,7 +2157,7 @@ main_28:
 ; }
 ; else{
 ; printf("\r\nInvalid Selection.\r\n");
-       pea       @m68kus~1_24.L
+       pea       @lab5_28.L
        jsr       (A2)
        addq.w    #4,A7
 ; continue;
@@ -2057,6 +2167,107 @@ main_29:
 ; }   
 ; }
 ; }
+ULDIV:
+       link    A6,#0
+       movem.l D0/D1,-(A7)
+       move.l  8(A6),D1
+       move.l  12(A6),D0
+       bra.s   ldiv_3
+LDIV:
+       link    A6,#0
+       movem.l D0/D1,-(A7)
+       move.l  8(A6),D1
+       move.l  12(A6),D0
+       tst.l   D0
+       bpl.s   ldiv_1
+       neg.l   D0
+       tst.l   D1
+       bpl.s   ldiv_2
+       neg.l   D1
+       bsr.s   dodiv
+       neg.l   D1
+       bra.s   ldiv_4
+ldiv_1:
+       tst.l   D1
+       bpl.s   ldiv_3
+       neg.l   D1
+       bsr.s   dodiv
+       neg.l   D0
+       bra.s   ldiv_4
+ldiv_2:
+       bsr.s   dodiv
+       neg.l   D0
+       neg.l   D1
+       bra.s   ldiv_4
+ldiv_3:
+       bsr.s   dodiv
+ldiv_4:
+       move.l  D0,8(A6)
+       move.l  D1,12(A6)
+       movem.l (A7)+,D0/D1
+       unlk    A6
+       rts
+dodiv:
+       cmpi.l  #$FFFF,D1
+       bhi.s   dodiv_2
+       cmpi.l  #$FFFF,D0
+       bhi.s   dodiv_1
+       divu    D1,D0
+       move.l  D0,D1
+       clr.w   D1
+       swap    D1
+       andi.l  #$FFFF,D0
+       rts
+dodiv_1:
+       movem.w D0/D2,-(A7)
+       clr.w   D0
+       swap    D0
+       divu    D1,D0
+       move.w  D0,D2
+       move.w  (A7)+,D0
+       divu    D1,D0
+       swap    D0
+       clr.l   D1
+       move.w  D0,D1
+       move.w  D2,D0
+       swap    D0
+       move.w  (A7)+,D2
+       rts
+dodiv_2:
+       movem.l D2/D3/D4,-(A7)
+       move.l  D1,D2
+       clr.w   D2
+       swap    D2
+       addq.l  #1,D2
+       move.l  D0,D3
+       move.l  D1,D4
+       move.l  D2,D1
+       bsr.s   dodiv_1
+       move.l  D4,D1
+       divu    D2,D1
+       divu    D1,D0
+       andi.l  #$FFFF,D0
+dodiv_3:
+       move.l  D4,D1
+       move.l  D4,D2
+       swap    D2
+       mulu    D0,D1
+       mulu    D0,D2
+       swap    D2
+       add.l   D2,D1
+       sub.l   D3,D1
+       bhi.s   dodiv_4
+       neg.l   D1
+       cmp.l   D1,D4
+       bhi.s   dodiv_5
+       addq.l  #1,D0
+       bra.s   dodiv_3
+dodiv_4:
+       subq.l  #1,D0
+       bra.s   dodiv_3
+dodiv_5:
+       movem.l (A7)+,D2/D3/D4
+       rts
 _putch:
        link      A6,#0
        movem.l   D2,-(A7)
@@ -3035,146 +3246,56 @@ strcpy_1:
        move.b    (A1)+,(A0)+
        bne       strcpy_1
        rts
-ULDIV:
-       link    A6,#0
-       movem.l D0/D1,-(A7)
-       move.l  8(A6),D1
-       move.l  12(A6),D0
-       bra.s   ldiv_3
-LDIV:
-       link    A6,#0
-       movem.l D0/D1,-(A7)
-       move.l  8(A6),D1
-       move.l  12(A6),D0
-       tst.l   D0
-       bpl.s   ldiv_1
-       neg.l   D0
-       tst.l   D1
-       bpl.s   ldiv_2
-       neg.l   D1
-       bsr.s   dodiv
-       neg.l   D1
-       bra.s   ldiv_4
-ldiv_1:
-       tst.l   D1
-       bpl.s   ldiv_3
-       neg.l   D1
-       bsr.s   dodiv
-       neg.l   D0
-       bra.s   ldiv_4
-ldiv_2:
-       bsr.s   dodiv
-       neg.l   D0
-       neg.l   D1
-       bra.s   ldiv_4
-ldiv_3:
-       bsr.s   dodiv
-ldiv_4:
-       move.l  D0,8(A6)
-       move.l  D1,12(A6)
-       movem.l (A7)+,D0/D1
-       unlk    A6
-       rts
-dodiv:
-       cmpi.l  #$FFFF,D1
-       bhi.s   dodiv_2
-       cmpi.l  #$FFFF,D0
-       bhi.s   dodiv_1
-       divu    D1,D0
-       move.l  D0,D1
-       clr.w   D1
-       swap    D1
-       andi.l  #$FFFF,D0
-       rts
-dodiv_1:
-       movem.w D0/D2,-(A7)
-       clr.w   D0
-       swap    D0
-       divu    D1,D0
-       move.w  D0,D2
-       move.w  (A7)+,D0
-       divu    D1,D0
-       swap    D0
-       clr.l   D1
-       move.w  D0,D1
-       move.w  D2,D0
-       swap    D0
-       move.w  (A7)+,D2
-       rts
-dodiv_2:
-       movem.l D2/D3/D4,-(A7)
-       move.l  D1,D2
-       clr.w   D2
-       swap    D2
-       addq.l  #1,D2
-       move.l  D0,D3
-       move.l  D1,D4
-       move.l  D2,D1
-       bsr.s   dodiv_1
-       move.l  D4,D1
-       divu    D2,D1
-       divu    D1,D0
-       andi.l  #$FFFF,D0
-dodiv_3:
-       move.l  D4,D1
-       move.l  D4,D2
-       swap    D2
-       mulu    D0,D1
-       mulu    D0,D2
-       swap    D2
-       add.l   D2,D1
-       sub.l   D3,D1
-       bhi.s   dodiv_4
-       neg.l   D1
-       cmp.l   D1,D4
-       bhi.s   dodiv_5
-       addq.l  #1,D0
-       bra.s   dodiv_3
-dodiv_4:
-       subq.l  #1,D0
-       bra.s   dodiv_3
-dodiv_5:
-       movem.l (A7)+,D2/D3/D4
-       rts
        section   const
                 align
 
 
-@m68kus~1_1:
+@lab5_1:
        dc.b      13,10,32,67,104,97,110,103,105,110,103,32,115
        dc.b      108,97,118,101,32,97,110,100,32,114,101,115
        dc.b      116,97,114,116,32,37,120,0
-@m68kus~1_2:
+@lab5_2:
        dc.b      13,10,32,72,73,84,32,69,68,71,69,32,67,65,83
        dc.b      69,32,37,120,32,37,120,37,120,0
-@m68kus~1_3:
+@lab5_3:
+       dc.b      13,10,32,87,114,105,116,101,32,97,100,100,114
+       dc.b      101,115,115,32,98,111,117,110,100,97,114,121
+       dc.b      44,32,114,101,115,116,97,114,116,105,110,103
+       dc.b      32,119,105,116,104,111,117,116,32,99,104,97
+       dc.b      110,103,105,110,103,32,115,108,97,118,101,0
+@lab5_4:
+       dc.b      13,10,45,45,45,45,45,45,45,45,45,45,45,45,45
+       dc.b      45,0
+@lab5_5:
+       dc.b      13,10,102,117,108,108,97,100,100,114,58,32,37
+       dc.b      120,0
+@lab5_6:
+       dc.b      13,10,100,97,116,97,58,32,37,120,0
+@lab5_7:
        dc.b      13,10,83,101,108,101,99,116,32,98,97,110,107
        dc.b      58,13,10,48,32,45,32,66,97,110,107,32,48,13
        dc.b      10,49,32,45,32,66,97,110,107,32,49,0
-@m68kus~1_4:
+@lab5_8:
        dc.b      13,10,73,110,118,97,108,105,100,32,115,101,108
        dc.b      101,99,116,105,111,110,46,0
-@m68kus~1_5:
+@lab5_9:
        dc.b      13,10,69,110,116,101,114,32,109,101,109,32,97
        dc.b      100,100,114,101,115,115,32,104,105,58,0
-@m68kus~1_6:
+@lab5_10:
        dc.b      13,10,69,110,116,101,114,32,109,101,109,32,97
        dc.b      100,100,114,101,115,115,32,108,111,58,0
-@m68kus~1_7:
+@lab5_11:
        dc.b      13,10,84,104,101,114,109,105,115,116,111,114
        dc.b      58,32,37,100,0
-@m68kus~1_8:
+@lab5_12:
        dc.b      13,10,80,111,116,101,110,116,105,111,109,101
        dc.b      116,101,114,58,32,37,100,0
-@m68kus~1_9:
+@lab5_13:
        dc.b      13,10,80,104,111,116,111,114,101,115,105,115
        dc.b      116,111,114,58,32,37,100,0
-@m68kus~1_10:
-       dc.b      13,10,45,45,45,45,45,45,45,45,45,45,45,45,45
-       dc.b      45,0
-@m68kus~1_11:
+@lab5_14:
        dc.b      13,10,76,97,98,32,53,58,32,73,50,67,0
-@m68kus~1_12:
+@lab5_15:
        dc.b      13,10,67,104,111,111,115,101,32,116,104,101
        dc.b      32,102,111,108,108,111,119,105,110,103,58,13
        dc.b      10,48,32,45,32,87,114,105,116,101,32,66,121
@@ -3185,30 +3306,30 @@ dodiv_5:
        dc.b      65,67,32,66,108,105,110,107,121,32,76,69,68
        dc.b      13,10,53,32,45,32,65,68,67,32,82,101,97,100
        dc.b      0
-@m68kus~1_13:
+@lab5_16:
        dc.b      13,10,69,110,116,101,114,32,98,121,116,101,32
        dc.b      116,111,32,119,114,105,116,101,58,32,0
-@m68kus~1_14:
+@lab5_17:
        dc.b      13,10,87,114,105,116,116,101,110,32,37,120,32
        dc.b      116,111,32,98,97,110,107,32,37,100,32,97,116
        dc.b      32,109,101,109,97,100,100,114,32,104,105,58
        dc.b      32,37,120,32,109,101,109,32,97,100,100,114,32
        dc.b      108,111,58,32,37,120,0
-@m68kus~1_15:
+@lab5_18:
        dc.b      13,10,82,101,97,100,32,37,120,32,102,114,111
        dc.b      109,32,98,97,110,107,32,37,100,32,97,116,32
        dc.b      109,101,109,97,100,100,114,32,104,105,58,32
        dc.b      37,120,32,109,101,109,32,97,100,100,114,32,108
        dc.b      111,58,32,37,120,0
-@m68kus~1_16:
+@lab5_19:
        dc.b      13,10,98,114,117,104,0
-@m68kus~1_17:
+@lab5_20:
        dc.b      13,10,69,110,116,101,114,32,115,105,122,101
        dc.b      32,111,102,32,112,97,103,101,32,116,111,32,119
        dc.b      114,105,116,101,40,109,97,120,32,49,50,56,32
        dc.b      105,110,32,104,101,120,32,61,61,32,48,120,55
        dc.b      70,41,58,32,0
-@m68kus~1_18:
+@lab5_21:
        dc.b      13,10,87,114,111,116,101,32,118,97,108,117,101
        dc.b      115,32,115,116,97,114,116,105,110,103,32,97
        dc.b      116,32,109,101,109,97,100,100,114,32,48,120
@@ -3216,22 +3337,24 @@ dodiv_5:
        dc.b      32,37,100,44,32,116,111,116,97,108,32,115,105
        dc.b      122,101,58,32,37,120,13,10,68,97,116,97,58,32
        dc.b      0
-@m68kus~1_19:
-       dc.b      37,120,0
-@m68kus~1_20:
+@lab5_22:
+       dc.b      37,120,32,0
+@lab5_23:
        dc.b      13,10,69,110,116,101,114,32,115,105,122,101
        dc.b      32,111,102,32,112,97,103,101,32,116,111,32,114
        dc.b      101,97,100,40,109,97,120,32,49,50,56,32,105
        dc.b      110,32,104,101,120,32,61,61,32,48,120,55,70
        dc.b      41,58,32,0
-@m68kus~1_21:
+@lab5_24:
        dc.b      13,10,82,101,97,100,32,118,97,108,117,101,115
        dc.b      32,115,116,97,114,116,105,110,103,32,97,116
        dc.b      32,109,101,109,97,100,100,114,32,48,120,37,120
        dc.b      37,120,32,97,110,100,32,98,97,110,107,32,37
        dc.b      100,44,32,116,111,116,97,108,32,115,105,122
        dc.b      101,58,32,37,120,13,10,68,97,116,97,58,32,0
-@m68kus~1_22:
+@lab5_25:
+       dc.b      37,120,0
+@lab5_26:
        dc.b      13,10,68,65,67,32,66,108,105,110,107,121,46
        dc.b      46,46,32,102,114,101,113,117,101,110,99,121
        dc.b      32,111,102,32,98,108,105,110,107,121,32,105
@@ -3243,10 +3366,10 @@ dodiv_5:
        dc.b      79,70,70,32,45,32,55,53,48,109,115,13,10,82
        dc.b      101,112,101,97,116,32,102,111,114,101,118,101
        dc.b      114,13,10,0
-@m68kus~1_23:
+@lab5_27:
        dc.b      13,10,65,68,67,32,67,104,97,110,110,101,108
        dc.b      32,79,117,116,112,117,116,58,0
-@m68kus~1_24:
+@lab5_28:
        dc.b      13,10,73,110,118,97,108,105,100,32,83,101,108
        dc.b      101,99,116,105,111,110,46,13,10,0
        section   data
