@@ -273,7 +273,7 @@
 **  https://www.kvaser.com/support/calculators/bit-timing-calculator/
 **  T1 	T2 	BTQ 	SP% 	SJW 	BIT RATE 	ERR% 	BTR0 	BTR1
 **  17	8	25	    68	     1	      100	    0	      04	7f
-*/
+*/2
 
 
 // initialisation for Can controller 0
