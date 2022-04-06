@@ -1083,7 +1083,7 @@ void Init_CanBus_Controller0(void)
     while ((Can0_ModeControlReg & RM_RR_Bit) == ClrByte)
         Can0_ModeControlReg = Can0_ModeControlReg | RM_RR_Bit;
 
-    // Set clock divide register to use pelican mode
+    // Set clock divide register to use pelican mode and bypass CAN input comparator (possible only in reset mode)
     Can0_ClockDivideReg = CANMode_Bit | CBP_Bit;
 
     Can0_InterruptEnReg = ClrIntEnSJA;
@@ -1103,8 +1103,8 @@ void Init_CanBus_Controller0(void)
     Can0_BusTiming0Reg = 0x04;
     //8'b0111_1111
     Can0_BusTiming1Reg = 0x7f;
-
-    Can0_OutControlReg = Tx1Float | Tx0PshPull | NormalMode;
+// Set to push pull config, normal mode, and float.
+    Can0_OutControlReg = Tx0Float | Tx0PshPull | NormalMode;
 
     // Set mode control to clr
     Can0_ModeControlReg = ClrByte;
@@ -1118,121 +1118,118 @@ void Init_CanBus_Controller1(void)
     // TODO - put your Canbus initialisation code for CanController 1 here
     // See section 4.2.1 in the application note for details (PELICAN MODE)
     while ((Can1_ModeControlReg & RM_RR_Bit) == ClrByte)
-    {
-        /* other bits than the reset mode/request bit are unchanged */
         Can1_ModeControlReg = Can1_ModeControlReg | RM_RR_Bit;
-    }
-    Can1_ClockDivideReg = CANMode_Bit | CBP_Bit;
-    Can1_InterruptEnReg = ClrIntEnSJA;
 
+    // Set clock divide register to use pelican mode and bypass CAN input comparator (possible only in reset mode)
+    Can1_ClockDivideReg = CANMode_Bit | CBP_Bit;
+
+    Can1_InterruptEnReg = ClrIntEnSJA;
+    // Clr byte, doesn't matter since we set mask to don't care
     Can1_AcceptCode0Reg = ClrByte;
     Can1_AcceptCode1Reg = ClrByte;
     Can1_AcceptCode2Reg = ClrByte;
     Can1_AcceptCode3Reg = ClrByte;
+    // Set to don't care for acceptance filtering
     Can1_AcceptMask0Reg = DontCare;
     Can1_AcceptMask1Reg = DontCare;
     Can1_AcceptMask2Reg = DontCare;
     Can1_AcceptMask3Reg = DontCare;
 
+    //8'b0000_0100 = 2 * tclk * (4 * 1 + 1) = 10 *tclk
     Can1_BusTiming0Reg = 0x04; 
+    //8'b0111_1111
     Can1_BusTiming1Reg = 0x7f; 
+    // Set to push pull config, normal mode, and float.
+    // TODO: Tx1Float / Tx0Float are different!, Tx1PshPull / Tx0PshPull are diff!!! ????
+    Can1_OutControlReg = Tx1Float | Tx1PshPull | NormalMode;
 
-    Can1_OutControlReg = Tx1Float | Tx0PshPull | NormalMode;
-
-    do
-    {
+    // Set mode control to clr
+    Can1_ModeControlReg = ClrByte;
+    while ((Can1_ModeControlReg & RM_RR_Bit) != ClrByte)
         Can1_ModeControlReg = ClrByte;
-    } while ((Can1_ModeControlReg & RM_RR_Bit) != ClrByte);
 }
 
-void CanBus0_Transmit(unsigned char data, unsigned char channel_num)
-{
-do
-  {
-  } while ((Can0_StatusReg & TBS_Bit) != TBS_Bit);
+/***
+ * 
+ * 
+ * CHANGE ID!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ *  Shouldn't matter because it's only used for acceptance filtering, which we set to dont' care and clr byte
+ * 
+ * */
+void CanBus0_Transmit(unsigned char data, unsigned char num)
+  while ((Can0_StatusReg & TBS_Bit) != TBS_Bit){}
 
-  Can0_TxFrameInfo = 0x08;
-  Can0_TxBuffer1 = 0xA5;
-  Can0_TxBuffer2 = 0x20;
+        // TODO: change to length of 2 ??
+    // Data length: 2, standard frame, data frame transmitted by CAN controller
+  Can0_TxFrameInfo = 0x02; 
+//   Tx identifier ID, [7:0] -> 8'b1111_1111
+  Can0_TxBuffer1 = 0xFF;
+//   Tx identifier ID, [7:5] -> 8'b111x_xxxx
+  Can0_TxBuffer2 = 0x70;
   Can0_TxBuffer3 = data;
-  Can0_TxBuffer4 = channel_num;
-  Can0_TxBuffer5 = data;
-  Can0_TxBuffer6 = data;
+  Can0_TxBuffer4 = num;
 
+// Set command that message shall be transmitted
   Can0_CommandReg = TR_Bit;
-
-  do
-  {
-  } while ((Can0_StatusReg & TCS_Bit) != TCS_Bit);
+//   Check transmission is complete
+  while (!(Can0_StatusReg & TCS_Bit)){}
 }
 
 // Transmit for sending a message via Can controller 1
-void CanBus1_Transmit(unsigned char data, unsigned char channel_num)
+void CanBus1_Transmit(unsigned char data, unsigned char num)
 {
     // TODO - put yourunsigned char data, unsigned char channel_numbus transmit code for CanController 1 here
     // See section 4.2.2 in the application note for details (PELICAN MODE)
-    do
-    {
-    } while ((Can1_StatusReg & TBS_Bit) != TBS_Bit);
+    while ((Can1_StatusReg & TBS_Bit) != TBS_Bit){}
 
-    Can1_TxFrameInfo = 0x08;
-    Can1_TxBuffer1 = 0xA5; // ID 1
-    Can1_TxBuffer2 = 0x20; // ID 2
+    // Data length: 2, standard frame, data frame transmitted by CAN controller
+    Can1_TxFrameInfo = 0x02;
+    //   Tx identifier ID, [7:0] -> 8'b1111_1111
+    Can1_TxBuffer1 = 0xFF; 
+    //   Tx identifier ID, [7:5] -> 8'b111x_xxxx
+    Can1_TxBuffer2 = 0x70; 
     Can1_TxBuffer3 = data;
-    Can1_TxBuffer4 = channel_num;
-    Can1_TxBuffer5 = data;
-    Can1_TxBuffer6 = data;
+    Can1_TxBuffer4 = num;
 
+    // Set command that message shall be transmitted
     Can1_CommandReg = TR_Bit;
-    do
-    {
-    } while ((Can1_StatusReg & TCS_Bit) != TCS_Bit);
+    //   Check transmission is complete
+    while (!(Can1_StatusReg & TCS_Bit)){}
 }
 
 // Receive for reading a received message via Can controller 0
-void CanBus0_Receive(int *channel_num, unsigned char *channel_data)
+void CanBus0_Receive(unsigned char *num, unsigned char *data)
 {
     // TODO - put your Canbus receive code for CanController 0 here
     // See section 4.2.4 in the application note for details (PELICAN MODE)
- unsigned char c[7];
 
-  do
-  {
-  } while ((Can0_StatusReg & RBS_Bit) != RBS_Bit);
+// Check receive is complete
+  while (!(Can0_StatusReg & RBS_Bit)){}
 
-  c[2] = Can0_RxBuffer3 & 0xFF;
-  c[3] = Can0_RxBuffer4 & 0xFF;
-  c[4] = Can0_RxBuffer5 & 0xFF;
-  c[5] = Can0_RxBuffer6 & 0xFF;
-  c[6] = Can0_RxBuffer7 & 0xFF;
+    // Rx3 is start of data
+  *num = Can0_RxBuffer3 & 0xFF;
+  *data = Can0_RxBuffer4 & 0xFF;
 
-  Can0_CommandReg = Can0_CommandReg & RRB_Bit;
+    // Release receive buffer
+  Can0_CommandReg = RRB_Bit;
 
-  *channel_num = c[3];
-  *channel_data = c[2];
 }
 
 // Receive for reading a received message via Can controller 1
-void CanBus1_Receive(int *channel_num, unsigned char *channel_data)
+void CanBus1_Receive(unsigned char *channel_num, unsigned char *channel_data)
 {
     // TODO - put your Canbus receive code for CanController 1 here
     // See section 4.2.4 in the application note for details (PELICAN MODE)
-    unsigned char c[7];
+    
+    // Check receive is complete
+    while (!(Can1_StatusReg & RBS_Bit)){}
 
-    do
-    {
-    } while ((Can1_StatusReg & RBS_Bit) != RBS_Bit);
+    // Rx3 is start of data
+    *num = Can1_RxBuffer3 & 0xFF;
+    *data = Can1_RxBuffer4 & 0xFF;
 
-    c[2] = Can1_RxBuffer3 & 0xFF;
-    c[3] = Can1_RxBuffer4 & 0xFF;
-    c[4] = Can1_RxBuffer5 & 0xFF;
-    c[5] = Can1_RxBuffer6 & 0xFF;
-    c[6] = Can1_RxBuffer7 & 0xFF;
-
-    Can1_CommandReg = Can1_CommandReg & RRB_Bit;
-
-    *channel_num = c[3];
-    *channel_data = c[2];
+    // Release receive buffer
+    Can1_CommandReg = RRB_Bit;
 }
 
 void CanBusTest(void)
@@ -1240,7 +1237,7 @@ void CanBusTest(void)
     // initialise the two Can controllers
 
     unsigned char data = 0;
-    int channel = 1;
+    unsigned char channel = 1;
     int i= 0;
     
     // simple application to alternately transmit and receive messages from each of two nodes
@@ -1298,7 +1295,7 @@ void main()
     Timer1Count = Timer2Count = Timer3Count = Timer4Count = 0;
     
 
-    printf("\r\nLab 6: CANBUS");
+    printf("\r\nLab 6b: CANBUS");
 
     // Set to level 6, for some reason we need 4 exception handlers
     InstallExceptionHandler(Timer_ISR, 30) ;		// install interrupt handler for Timers 1-4 on level 3 IRQ
@@ -1328,7 +1325,7 @@ void main()
     **  I2C Program Lab 5
     *************************************************************************************************/
 
-    printf("\r\n\r\n---- CANBUS Test ----\r\n");
+    printf("\r\n\r\n---- CANBUS Interrupts ----\r\n");
 
     CanBusTest();
 
