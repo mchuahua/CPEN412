@@ -1216,7 +1216,7 @@ void CanBus0_Receive(unsigned char *num, unsigned char *data)
 }
 
 // Receive for reading a received message via Can controller 1
-void CanBus1_Receive(unsigned char *channel_num, unsigned char *channel_data)
+void CanBus1_Receive(unsigned char *num, unsigned char *data)
 {
     // TODO - put your Canbus receive code for CanController 1 here
     // See section 4.2.4 in the application note for details (PELICAN MODE)
