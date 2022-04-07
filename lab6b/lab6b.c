@@ -411,12 +411,12 @@ void Wait(void);
 char readADC(int);
 
 // CANBUS
-void CanBus1_Transmit(unsigned char data, unsigned char channel_num);
-void CanBus0_Transmit(unsigned char data, unsigned char channel_num);
+void CanBus1_Transmit(unsigned char data, unsigned char num);
+void CanBus0_Transmit(unsigned char data, unsigned char num);
 void Init_CanBus_Controller1(void);
 void Init_CanBus_Controller0(void);
-void CanBus1_Receive(int *channel_num, unsigned char *channel_data);
-void CanBus0_Receive(int *channel_num, unsigned char *channel_data);
+void CanBus1_Receive(unsigned char *num, unsigned char *data);
+void CanBus0_Receive(unsigned char *num, unsigned char *data);
 
 
 /*****************************************************************************************
@@ -469,48 +469,28 @@ void Timer_ISR()
     Init_CanBus_Controller0();
     Init_CanBus_Controller1();
 
-    // Thermistor Interrupt
-    if (Timer4Status == 1)
-    {                          // Did Timer 4 produce the Interrupt?
-        Timer4Control = 3;     // reset the timer to clear the interrupt, enable interrupts and allow counter to run
-        // HEX_B = Timer4Count++; // increment a HEX count on HEX_B with each tick of Timer 4
-        // Use portA_count as a counter, since this isr happens every 500ms
-        if(PortA_Count == 3){
-            CanBus1_Transmit(readADC(3), 0x4);
-            PortA_Count = 0;
-            z = 1;
-            // printf("\r\nInterrupt: Timer 4");
-        }
-        else{
-            PortA_Count += 1;
-        }
-        // printf("\r\nInterrupt: Timer 4 hex A: %d", PortA_Count);
-    }
-    // Light sensor interrupt
-    if (Timer3Status == 1)
-    {                          // Did Timer 3 produce the Interrupt?
-        Timer3Control = 3;     // reset the timer to clear the interrupt, enable interrupts and allow counter to run
-        // HEX_A = Timer3Count++; // increment a HEX count on Port HEX_A with each tick of Timer 3
-        CanBus1_Transmit(readADC(2), 0x3);
-        z = 1;
-        // printf("\r\nInterrupt: Timer 3");
-    }
-    // Potentiometer interrupt
-    if (Timer2Status == 1)
-    {                          // Did Timer 2 produce the Interrupt?
-        Timer2Control = 3;     // reset the timer to clear the interrupt, enable interrupts and allow counter to run
-        // PortC = Timer2Count++; // increment an LED count on PortC with each tick of Timer 2
-        CanBus1_Transmit(readADC(1), 0x2);
-        z = 1;
-        // printf("\r\nInterrupt: Timer 2");
-    }
-    // Switch interrupt
     if (Timer1Status == 1)
     {                          // Did Timer 1 produce the Interrupt?
         Timer1Control = 3;     // reset the timer to clear the interrupt, enable interrupts and allow counter to run
         // PortA = Timer1Count++; // increment an LED count on PortA with each tick of Timer 1
+        // Switch interrupt
         CanBus1_Transmit(PortA, 0x1);
-        z = 1;
+        // Potentiometer interrupt
+        if (PortA_Count % 2 == 0){
+            CanBus1_Transmit(readADC(1), 0x2);
+        }
+        // Light sensor interrupt
+        if (PortA_Count % 5 == 0){
+            CanBus1_Transmit(readADC(2), 0x3);
+        }
+        // Thermistor Interrupt
+        if (PortA_Count % 20 == 0){
+            CanBus1_Transmit(readADC(3), 0x4);
+            PortA_Count = 0;
+        }
+        else{
+            PortA_Count +=1;
+        }
         // printf("\r\nInterrupt: Timer 1");
     }
 
@@ -1156,18 +1136,19 @@ void Init_CanBus_Controller1(void)
  *  Shouldn't matter because it's only used for acceptance filtering, which we set to dont' care and clr byte
  * 
  * */
-void CanBus0_Transmit(unsigned char data, unsigned char num)
-  while ((Can0_StatusReg & TBS_Bit) != TBS_Bit){}
+void CanBus0_Transmit(unsigned char data, unsigned char num){
+  while ((Can0_StatusReg & TBS_Bit) != TBS_Bit){
+  }
 
         // TODO: change to length of 2 ??
     // Data length: 2, standard frame, data frame transmitted by CAN controller
-  Can0_TxFrameInfo = 0x02; 
-//   Tx identifier ID, [7:0] -> 8'b1111_1111
-  Can0_TxBuffer1 = 0xFF;
+  Can0_TxFrameInfo = 0x01; 
+//   Tx identifier ID
+  Can0_TxBuffer1 = num;
 //   Tx identifier ID, [7:5] -> 8'b111x_xxxx
   Can0_TxBuffer2 = 0x70;
   Can0_TxBuffer3 = data;
-  Can0_TxBuffer4 = num;
+//   Can0_TxBuffer4 = num;
 
 // Set command that message shall be transmitted
   Can0_CommandReg = TR_Bit;
@@ -1183,13 +1164,13 @@ void CanBus1_Transmit(unsigned char data, unsigned char num)
     while ((Can1_StatusReg & TBS_Bit) != TBS_Bit){}
 
     // Data length: 2, standard frame, data frame transmitted by CAN controller
-    Can1_TxFrameInfo = 0x02;
-    //   Tx identifier ID, [7:0] -> 8'b1111_1111
-    Can1_TxBuffer1 = 0xFF; 
+    Can1_TxFrameInfo = 0x01;
+    //   Tx identifier ID
+    Can1_TxBuffer1 = num; 
     //   Tx identifier ID, [7:5] -> 8'b111x_xxxx
     Can1_TxBuffer2 = 0x70; 
     Can1_TxBuffer3 = data;
-    Can1_TxBuffer4 = num;
+    // Can1_TxBuffer4 = num;
 
     // Set command that message shall be transmitted
     Can1_CommandReg = TR_Bit;
@@ -1206,9 +1187,10 @@ void CanBus0_Receive(unsigned char *num, unsigned char *data)
 // Check receive is complete
   while (!(Can0_StatusReg & RBS_Bit)){}
 
+  *num = Can0_RxBuffer1 & 0xFF;
     // Rx3 is start of data
-  *num = Can0_RxBuffer3 & 0xFF;
-  *data = Can0_RxBuffer4 & 0xFF;
+  *data = Can0_RxBuffer3 & 0xFF;
+//   *num = Can0_RxBuffer4 & 0xFF;
 
     // Release receive buffer
   Can0_CommandReg = RRB_Bit;
@@ -1224,9 +1206,10 @@ void CanBus1_Receive(unsigned char *num, unsigned char *data)
     // Check receive is complete
     while (!(Can1_StatusReg & RBS_Bit)){}
 
+    *num = Can1_RxBuffer1 & 0xFF;
     // Rx3 is start of data
-    *num = Can1_RxBuffer3 & 0xFF;
-    *data = Can1_RxBuffer4 & 0xFF;
+    *data = Can1_RxBuffer3 & 0xFF;
+    // *num = Can1_RxBuffer4 & 0xFF;
 
     // Release receive buffer
     Can1_CommandReg = RRB_Bit;
@@ -1238,26 +1221,25 @@ void CanBusTest(void)
 
     unsigned char data = 0;
     unsigned char channel = 1;
-    int i= 0;
     
     // simple application to alternately transmit and receive messages from each of two nodes
 
     while (1)
     {
-    
-        if (z){
+        
+        // if (z){
             CanBus0_Receive(&channel, &data);  // receive a message via Controller 1 (and display it)
             // printf("\r\nasdf2222 %d, %d", channel, data);
-            if (channel == 0x01)
+            if (channel == 0x1)
                 printf("\r\nLower 8 Switches: 0x%x", data);
-            else if (channel == 0x02)
+            else if (channel == 0x2)
                 printf("\r\nPotentiometer:    0x%x", data);
-            else if (channel == 0x03)
+            else if (channel == 0x3)
                 printf("\r\nLight Sensor:     0x%x", data);
-            else if (channel == 0x04)
+            else if (channel == 0x4)
                 printf("\r\nThermistor:       0x%x", data);
             z = 0;
-        }
+        // }
     }
 }
 
@@ -1292,27 +1274,19 @@ void main()
     int addr = 2048;
     int size;
     i = x = y = z = PortA_Count =0;
-    Timer1Count = Timer2Count = Timer3Count = Timer4Count = 0;
+    Timer1Count = 0;
     
 
     printf("\r\nLab 6b: CANBUS");
 
     // Set to level 6, for some reason we need 4 exception handlers
     InstallExceptionHandler(Timer_ISR, 30) ;		// install interrupt handler for Timers 1-4 on level 3 IRQ
-    InstallExceptionHandler(Timer_ISR, 29) ;		// install interrupt handler for Timers 1-4 on level 3 IRQ
-    InstallExceptionHandler(Timer_ISR, 28) ;		// install interrupt handler for Timers 1-4 on level 3 IRQ
-    InstallExceptionHandler(Timer_ISR, 27) ;		// install interrupt handler for Timers 1-4 on level 3 IRQ
+    // InstallExceptionHandler(Timer_ISR, 27) ;		// install interrupt handler for Timers 1-4 on level 3 IRQ
 
 	// program time delay into timers 1-4
     Timer1Data = 0x25;	// 100 ms
-    Timer2Data = 0x4B; // 200ms
-    Timer3Data = 0xBD; // 500ms
-    Timer4Data = 0xBD; // 500ms, use some counter to multiply by 4 to turn on for 2s
 
     Timer1Control = 3;		// write 3 to control register to Bit0 = 1 (enable interrupt from timers) 1 - 4 and allow them to count Bit 1 = 1
-    Timer2Control = 3;
-    Timer3Control = 3;
-    Timer4Control = 3;
 
     Init_LCD();   // initialise the LCD display to use a parallel data interface and 2 lines of display
     Init_CanBus_Controller0();
